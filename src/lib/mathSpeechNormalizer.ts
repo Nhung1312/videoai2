@@ -8,6 +8,22 @@ export function normalizeMathToVietnameseSpeech(latexOrText: string): string {
 
   let speech = latexOrText.trim();
 
+  // 0. Common Vietnamese algebra narration cleanup
+  // Keep lowercase algebra variables distinct from uppercase geometry point names.
+  speech = speech.replace(/\bPT\b/gi, 'phương trình');
+  speech = speech.replace(/\bPB\b/gi, 'phân biệt');
+  speech = speech.replace(/\bt\s*\/\s*m\b/gi, 'thỏa mãn');
+  speech = speech.replace(/(?:Δ|\\Delta)\s*['’′]/g, 'đen-ta phẩy');
+  speech = speech.replace(/(?:Δ|\\Delta)/g, 'đen-ta');
+  speech = speech.replace(/\b(?:đen\s*ta|delta)\s*phẩy\b/gi, 'đen-ta phẩy');
+  speech = speech.replace(/\b(?:đen\s*ta|delta)\b/gi, 'đen-ta');
+  speech = speech.replace(/x\s*[_₁]?1\b/gi, 'ích một');
+  speech = speech.replace(/x\s*[_₂]?2\b/gi, 'ích hai');
+  speech = speech.replace(/x₁/gi, 'ích một');
+  speech = speech.replace(/x₂/gi, 'ích hai');
+  speech = speech.replace(/m²/g, 'mờ bình phương');
+  speech = speech.replace(/\bm\s*\^\s*2\b/gi, 'mờ bình phương');
+
   // 1. Common Vietnamese Geometry phrases & abbreviations
   speech = speech.replace(/\\Delta\s*([A-Z]{1,4})/g, 'tam giác $1');
   speech = speech.replace(/\\triangle\s*([A-Z]{1,4})/g, 'tam giác $1');
@@ -94,6 +110,16 @@ export function normalizeMathToVietnameseSpeech(latexOrText: string): string {
   speech = speech.replace(/\//g, ' chia ');
   speech = speech.replace(/>/g, ' lớn hơn ');
   speech = speech.replace(/</g, ' nhỏ hơn ');
+
+  // Isolated lowercase algebra variables/coefficients in Vietnamese math speech.
+  speech = speech.replace(/\bm\b/g, 'mờ');
+  speech = speech.replace(/\bx\b/g, 'ích');
+  speech = speech.replace(/\by\b/g, 'i');
+  speech = speech.replace(/\bb\b/g, 'bê');
+  speech = speech.replace(/\bc\b/g, 'xê');
+  speech = speech.replace(/\bd\b/g, 'đê');
+  speech = speech.replace(/\bn\b/g, 'en');
+  speech = speech.replace(/\bt\b/g, 'tê');
 
   // Geometry point/segment names must be spoken as conventional Vietnamese
   // letter NAMES, not browser phonics ("hờ", "bờ", "cờ").
