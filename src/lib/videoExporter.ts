@@ -395,19 +395,34 @@ export class VideoExporter {
 
         // Right: deterministic geometry diagram stays visible through both phases.
         drawRoundedRect(ctx, rightX, bodyTop, rightW, bodyHeight, 20, '#ffffff', '#cbd5e1', 1.5);
-        drawGeometryOnCanvas(
-          ctx,
-          lesson.geometryScene,
-          currentStep,
-          stepProgress,
-          currentStepInfo.effectiveDuration,
-          {
+        if (lesson.module) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(rightX + 1, bodyTop + 1, rightW - 2, bodyHeight - 2);
+          ctx.clip();
+          lesson.module.render(ctx, currentStepIndex, stepProgress, {
             x: rightX,
             y: bodyTop,
             width: rightW,
             height: bodyHeight,
-          }
-        );
+            isPortrait: false,
+          });
+          ctx.restore();
+        } else {
+          drawGeometryOnCanvas(
+            ctx,
+            lesson.geometryScene,
+            currentStep,
+            stepProgress,
+            currentStepInfo.effectiveDuration,
+            {
+              x: rightX,
+              y: bodyTop,
+              width: rightW,
+              height: bodyHeight,
+            }
+          );
+        }
       } else {
         // Portrait 9:16 Layout: Top (Geometry Diagram) + Bottom (Problem or Solution)
         const topDiagramH = Math.round(bodyHeight * 0.48);
@@ -427,19 +442,34 @@ export class VideoExporter {
           1.5
         );
 
-        drawGeometryOnCanvas(
-          ctx,
-          lesson.geometryScene,
-          currentStep,
-          stepProgress,
-          currentStepInfo.effectiveDuration,
-          {
+        if (lesson.module) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(pad + 1, bodyTop + 1, width - pad * 2 - 2, topDiagramH - 2);
+          ctx.clip();
+          lesson.module.render(ctx, currentStepIndex, stepProgress, {
             x: pad,
             y: bodyTop,
             width: width - pad * 2,
             height: topDiagramH,
-          }
-        );
+            isPortrait: true,
+          });
+          ctx.restore();
+        } else {
+          drawGeometryOnCanvas(
+            ctx,
+            lesson.geometryScene,
+            currentStep,
+            stepProgress,
+            currentStepInfo.effectiveDuration,
+            {
+              x: pad,
+              y: bodyTop,
+              width: width - pad * 2,
+              height: topDiagramH,
+            }
+          );
+        }
 
         // Bottom Problem or Solution card
         if (model.isGeometryProblemPhase) {

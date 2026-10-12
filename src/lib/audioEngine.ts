@@ -60,8 +60,6 @@ class AudioEngineClass {
   private stepErrors = new Map<string, string>();
   private hydrationPromise: Promise<void> | null = null;
   private currentAudioElement: HTMLAudioElement | null = null;
-  private narrationCueAudio: HTMLAudioElement | null = null;
-  private cancelNarrationCuePlayback: (() => void) | null = null;
   private currentStepId: string | null = null;
   private listeners = new Set<AudioEngineListener>();
   private activePreloadAbortControllers = new Map<string, AbortController>();
@@ -544,42 +542,6 @@ class AudioEngineClass {
     });
   }
 
-  /**
-   * Called synchronously from a user click before a long TTS preload. This
-   * primes browser audio permission so the later Kore cue is not treated as
-   * unsolicited autoplay after the async preload has finished.
-   */
-  public unlockPlayback() {
-    if (typeof window === 'undefined') return;
-    if (!this.currentAudioElement) {
-      this.currentAudioElement = new Audio();
-      this.currentAudioElement.preload = 'auto';
-    }
-
-    try {
-      const silentBuffer = this.generateSilentWavBuffer(0.06, 8000);
-      const silentBlob = new Blob([silentBuffer], { type: 'audio/wav' });
-      const silentUrl = URL.createObjectURL(silentBlob);
-      const audio = this.currentAudioElement;
-      audio.src = silentUrl;
-      audio.currentTime = 0;
-      void audio
-        .play()
-        .then(() => {
-          window.setTimeout(() => {
-            audio.pause();
-            audio.currentTime = 0;
-            URL.revokeObjectURL(silentUrl);
-          }, 80);
-        })
-        .catch(() => {
-          URL.revokeObjectURL(silentUrl);
-        });
-    } catch {
-      // The real cue playback still reports a clear browser error if needed.
-    }
-  }
-
   public getPlaybackRateMultiplier(): number {
     switch (this.settings.voiceSpeed) {
       case 'slow':
@@ -656,109 +618,6 @@ class AudioEngineClass {
     }
   }
 
-  /**
-   * Plays one imported-HTML narration cue to completion with the same Kore
-   * TTS/cache as normal lessons. `onStarted` fires as soon as the browser has
-   * actually begun playback; the HTML bridge uses that moment to start its
-   * matching animation while this Promise keeps the host queue serialized.
-   */
-  public async playNarrationCue(
-    cueId: string,
-    narration: string,
-    voiceName = this.settings.voiceName,
-    onStarted?: () => void
-  ): Promise<void> {
-    if (!this.settings.enabled || !narration?.trim()) {
-      onStarted?.();
-      return;
-    }
-
-    const cached = await this.loadStepAudio(cueId, narration, voiceName);
-    if (!cached?.audioUrl) {
-      throw new Error(
-        this.getStepError(cueId) ||
-          'Không tạo được giọng Kore cho đoạn lời đọc này.'
-      );
-    }
-
-    this.cancelActiveNarrationCue();
-    const audio = new Audio(cached.audioUrl);
-    audio.preload = 'auto';
-    audio.playbackRate = this.getPlaybackRateMultiplier();
-    this.narrationCueAudio = audio;
-    this.notifyStatus(cueId, 'playing');
-
-    await new Promise<void>((resolve, reject) => {
-      let settled = false;
-
-      const cleanup = () => {
-        audio.removeEventListener('ended', handleEnded);
-        audio.removeEventListener('error', handleError);
-        if (this.narrationCueAudio === audio) this.narrationCueAudio = null;
-        if (this.cancelNarrationCuePlayback === handleCancel) {
-          this.cancelNarrationCuePlayback = null;
-        }
-      };
-
-      const finish = (fn: () => void) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        fn();
-      };
-
-      const handleEnded = () =>
-        finish(() => {
-          this.notifyStatus(cueId, 'ready');
-          resolve();
-        });
-
-      const handleError = () =>
-        finish(() => {
-          const message = 'Trình duyệt không phát được âm thanh Kore.';
-          this.stepErrors.set(cueId, message);
-          this.notifyStatus(cueId, 'error', message);
-          reject(new Error(message));
-        });
-
-      const handleCancel = () =>
-        finish(() => {
-          audio.pause();
-          resolve();
-        });
-
-      this.cancelNarrationCuePlayback = handleCancel;
-      audio.addEventListener('ended', handleEnded, { once: true });
-      audio.addEventListener('error', handleError, { once: true });
-
-      audio
-        .play()
-        .then(() => onStarted?.())
-        .catch((err) => {
-          finish(() => {
-            const message =
-              err?.name === 'NotAllowedError'
-                ? 'Trình duyệt đang chặn tự phát âm thanh. Hãy bấm Chạy bài có tiếng một lần nữa.'
-                : err?.message || 'Không phát được âm thanh Kore.';
-            this.stepErrors.set(cueId, message);
-            this.notifyStatus(cueId, 'error', message);
-            reject(new Error(message));
-          });
-        });
-    });
-  }
-
-  private cancelActiveNarrationCue() {
-    if (this.cancelNarrationCuePlayback) {
-      const cancel = this.cancelNarrationCuePlayback;
-      this.cancelNarrationCuePlayback = null;
-      cancel();
-    } else if (this.narrationCueAudio) {
-      this.narrationCueAudio.pause();
-      this.narrationCueAudio = null;
-    }
-  }
-
   public pause() {
     if (this.currentAudioElement && !this.currentAudioElement.paused) {
       this.currentAudioElement.pause();
@@ -766,7 +625,6 @@ class AudioEngineClass {
   }
 
   public restart() {
-    this.cancelActiveNarrationCue();
     if (this.currentAudioElement) {
       this.currentAudioElement.pause();
       this.currentAudioElement.currentTime = 0;

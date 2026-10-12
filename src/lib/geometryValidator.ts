@@ -4,7 +4,7 @@
  * and generates geometrically accurate scenes for Middle School Geometry (THCS).
  */
 
-import {
+import type {
   GeometryScene,
   GeometricPoint,
   GeometricSegment,
@@ -13,7 +13,7 @@ import {
   GeometricEqualLengthMarker,
   GeometricRelation,
   LessonStep,
-} from '../types/lesson';
+} from '../types/lesson.ts';
 
 export type DetectedFigureType =
   | 'isosceles_trapezoid'

@@ -81,9 +81,10 @@ export function getPresentationViewModel(
   const settings = options?.settings;
 
   const hasGeometry = Boolean(
-    lesson.geometryScene &&
-      lesson.geometryScene.points &&
-      lesson.geometryScene.points.length > 0
+    lesson.module ||
+      (lesson.geometryScene &&
+        lesson.geometryScene.points &&
+        lesson.geometryScene.points.length > 0)
   );
 
   const problemTypeLabel =

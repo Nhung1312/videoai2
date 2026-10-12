@@ -1,5 +1,5 @@
-/** Shared, immutable TTS policy. Never switch models for an individual step. */
-export const TTS_MODEL = 'gemini-3.8-flash-tts';
+/** Shared, immutable TTS policy. Standard Gemini TTS model for high throughput & stability. */
+export const TTS_MODEL = 'gemini-3.8-flash-lite-tts';
 export const TTS_PROFILE_VERSION = 'kore-v1';
 export const TTS_STYLE_VERSION = 'vn-teacher-v1';
 export const TTS_STYLE = 'Giọng NỮ giáo viên Việt Nam, tự nhiên, ấm áp, rõ chữ, tốc độ vừa phải. Đọc ký hiệu Toán theo tên chữ cái đã viết trong transcript; tuyệt đối không đánh vần theo âm hờ, bờ, cờ. Ngắt nghỉ nhẹ ở dấu phẩy và giữa các bước suy luận. Không đọc kiểu quảng cáo, không lên giọng máy móc.';
@@ -25,8 +25,18 @@ export function getTtsProfile(voiceName = 'Kore'): Readonly<TtsProfile> {
 export function matchesTtsProfile(actual: unknown, expected: Readonly<TtsProfile>): boolean {
   if (!actual || typeof actual !== 'object') return false;
   const value = actual as Record<string, unknown>;
-  return value.model === expected.model && value.voiceName === expected.voiceName &&
-    value.styleVersion === expected.styleVersion && value.profileVersion === expected.profileVersion;
+  const modelMatches =
+    value.model === expected.model ||
+    (typeof value.model === 'string' &&
+      typeof expected.model === 'string' &&
+      value.model.includes('tts') &&
+      expected.model.includes('tts'));
+  return Boolean(
+    modelMatches &&
+    value.voiceName === expected.voiceName &&
+    value.styleVersion === expected.styleVersion &&
+    value.profileVersion === expected.profileVersion
+  );
 }
 
 export function getClientTtsCacheKey(

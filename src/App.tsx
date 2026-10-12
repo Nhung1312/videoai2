@@ -9,7 +9,7 @@ import { ScriptEditorModal } from './components/ScriptEditorModal';
 import { ExportVideoModal } from './components/ExportVideoModal';
 import { SaveLessonModal } from './components/SaveLessonModal';
 import { LessonLibraryModal } from './components/LessonLibraryModal';
-import { HtmlLessonPlayerModal } from './components/HtmlLessonPlayerModal';
+import { ImportLessonModuleModal } from './components/ImportLessonModuleModal';
 import { AudioEngine } from './lib/audioEngine';
 import { DraftStorage } from './lib/draftStorage';
 import { LessonStorage, SavedLessonEntry } from './lib/lessonStorage';
@@ -23,6 +23,7 @@ import {
   CheckCircle2,
   Save,
   FolderArchive,
+  FileCode,
 } from 'lucide-react';
 
 export default function App() {
@@ -34,7 +35,7 @@ export default function App() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [isLibraryModalOpen, setIsLibraryModalOpen] = useState(false);
-  const [isHtmlLessonModalOpen, setIsHtmlLessonModalOpen] = useState(false);
+  const [isImportModuleModalOpen, setIsImportModuleModalOpen] = useState(false);
   const [savedLessonsCount, setSavedLessonsCount] = useState<number>(() => {
     return LessonStorage.getAll().length;
   });
@@ -291,16 +292,12 @@ export default function App() {
             </button>
 
             <button
-              onClick={() => {
-                AudioEngine.pause();
-                timeline.pause();
-                setIsHtmlLessonModalOpen(true);
-              }}
-              className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-500 text-white shadow-md shadow-violet-600/20 transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
-              title="Nhập HTML bài giảng có narrationScript và tự phát giọng Kore"
+              onClick={() => setIsImportModuleModalOpen(true)}
+              className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-600/20 transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
+              title="Nhập Lesson Module với Canvas Renderer deterministic riêng"
             >
-              <Volume2 className="w-3.5 h-3.5" />
-              <span>HTML + Kore</span>
+              <FileCode className="w-3.5 h-3.5" />
+              <span>Nhập Lesson Module</span>
             </button>
 
             <button
@@ -503,11 +500,11 @@ export default function App() {
         onOpenSaveCurrent={() => setIsSaveModalOpen(true)}
       />
 
-      <HtmlLessonPlayerModal
-        isOpen={isHtmlLessonModalOpen}
-        onClose={() => setIsHtmlLessonModalOpen(false)}
+      <ImportLessonModuleModal
+        isOpen={isImportModuleModalOpen}
+        onClose={() => setIsImportModuleModalOpen(false)}
+        onApplyLesson={handleApplyLesson}
       />
-
     </div>
   );
 }

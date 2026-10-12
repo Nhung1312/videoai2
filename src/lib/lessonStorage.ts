@@ -6,6 +6,7 @@
 
 import { LessonScript, ProblemType, LessonPresentationSettings } from '../types/lesson';
 import { SAMPLE_GEOMETRY_LESSON, SAMPLE_ALGEBRA_LESSON } from './sampleLessons';
+import { LessonModuleRegistry } from './lessonModuleRegistry';
 
 export interface SavedLessonEntry {
   id: string;
@@ -18,6 +19,7 @@ export interface SavedLessonEntry {
   updatedAt: number;
   source: 'ai' | 'sample' | 'custom';
   tags?: string[];
+  moduleId?: string;
 }
 
 const LESSON_STORAGE_KEY = 'ai_math_video_studio_saved_lessons_v1';
@@ -36,6 +38,16 @@ export const LessonStorage = {
       if (!Array.isArray(parsed) || parsed.length === 0) {
         return this.initDefaultSamples();
       }
+      // Rehydrate LessonModule renderers if saved
+      parsed.forEach((entry) => {
+        const mId = entry.moduleId || entry.lesson?.module?.id;
+        if (mId) {
+          const mod = LessonModuleRegistry.get(mId);
+          if (mod && entry.lesson) {
+            entry.lesson.module = mod;
+          }
+        }
+      });
       return parsed;
     } catch (e) {
       console.warn('Failed to parse saved lessons from localStorage:', e);
@@ -113,6 +125,10 @@ export const LessonStorage = {
       ...JSON.parse(JSON.stringify(lesson)),
       title: effectiveTitle,
     };
+    if (lesson.module) {
+      effectiveLesson.module = lesson.module;
+      LessonModuleRegistry.register(lesson.module);
+    }
 
     let targetId = options?.id;
     const existingIndex = targetId ? list.findIndex((item) => item.id === targetId) : -1;
@@ -131,6 +147,7 @@ export const LessonStorage = {
         presentationSettings: options?.presentationSettings || existing.presentationSettings,
         updatedAt: now,
         source: options?.source || existing.source,
+        moduleId: lesson.module?.id || existing.moduleId,
       };
       list[existingIndex] = savedEntry;
     } else {
@@ -146,6 +163,7 @@ export const LessonStorage = {
         createdAt: now,
         updatedAt: now,
         source: options?.source || 'custom',
+        moduleId: lesson.module?.id,
       };
       // Insert at beginning of list
       list.unshift(savedEntry);

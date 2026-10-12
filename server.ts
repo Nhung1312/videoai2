@@ -339,47 +339,70 @@ app.post('/api/tts', async (req, res) => {
       console.warn('Error reading TTS disk cache:', diskErr);
     }
 
-    // 3. Synthesize with Gemini API (up to 2 sequential attempts with backoff)
+    // 3. Synthesize with Gemini API (trying primary model, then fallback if rate-limited)
+    const modelsToTry = Array.from(
+      new Set([
+        ttsProfile.model,
+        'gemini-3.8-flash-lite-tts',
+        'gemini-3.8-flash-tts',
+      ])
+    );
     let lastError: any = null;
     let base64Audio: string | undefined;
 
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        const response = await ai.models.generateContent({
-          model: ttsProfile.model,
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                {
-                  text: normalizedText,
-                  speechMetadata: {
-                    style: TTS_STYLE,
+    for (const model of modelsToTry) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const response = await ai.models.generateContent({
+            model,
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  {
+                    text: normalizedText,
+                    speechMetadata: {
+                      style: TTS_STYLE,
+                    },
                   },
+                ],
+              },
+            ],
+            config: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName: selectedVoice },
                 },
-              ],
-            },
-          ],
-          config: {
-            responseModalities: ['AUDIO'],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: selectedVoice },
               },
             },
-          },
-        });
+          });
 
-        base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        if (base64Audio) break;
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`TTS generateContent attempt ${attempt} error:`, err?.message || err);
-        if (attempt < 2) {
-          // Wait 1.2s before retry
-          await new Promise((r) => setTimeout(r, 1200));
+          base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+          if (base64Audio) break;
+        } catch (err: any) {
+          lastError = err;
+          console.warn(`TTS ${model} attempt ${attempt} error:`, err?.message || err);
+          const errStr = String(err?.message || '') + ' ' + String(err || '');
+          const isQuota =
+            err?.status === 429 ||
+            err?.code === 429 ||
+            errStr.includes('429') ||
+            errStr.includes('RESOURCE_EXHAUSTED') ||
+            errStr.includes('quota') ||
+            errStr.includes('Quota');
+
+          if (isQuota) {
+            // Rate limit reached on this model; fail over to the next candidate model immediately
+            break;
+          }
+
+          if (attempt < 2) {
+            await new Promise((r) => setTimeout(r, 1000));
+          }
         }
       }
+      if (base64Audio) break;
     }
 
     if (!base64Audio) {

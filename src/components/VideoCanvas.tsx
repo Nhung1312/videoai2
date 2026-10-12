@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import { LessonScript, LessonPresentationSettings } from '../types/lesson';
 import { TimelineState } from '../lib/useTimeline';
 import { GeometryRenderer } from './GeometryRenderer';
+import { LessonModuleCanvas } from './LessonModuleCanvas';
 import { MathRenderer, FormattedMathText, MixedMathLineView } from './MathRenderer';
 import { AudioEngine } from '../lib/audioEngine';
 import { getPresentationViewModel } from '../lib/presentationModel';
@@ -217,28 +218,46 @@ export const VideoCanvas: React.FC<VideoCanvasProps> = ({
 
                 {/* Right Column: Geometry Scene */}
                 <div className="col-span-7 bg-white rounded-2xl ring-1 ring-slate-200 border border-slate-200 p-2 sm:p-3 shadow-xs flex items-center justify-center relative overflow-hidden">
-                  <GeometryRenderer
-                    scene={lesson.geometryScene}
-                    currentStep={currentStep}
-                    stepProgress={stepProgress}
-                    stepEffectiveDuration={stepEffectiveDuration}
-                    isEditable={isEditable}
-                    onPointMoved={onPointMoved}
-                  />
+                  {lesson.module ? (
+                    <LessonModuleCanvas
+                      module={lesson.module}
+                      stepIndex={currentStepIndex}
+                      progress={stepProgress}
+                      isPortrait={false}
+                    />
+                  ) : (
+                    <GeometryRenderer
+                      scene={lesson.geometryScene}
+                      currentStep={currentStep}
+                      stepProgress={stepProgress}
+                      stepEffectiveDuration={stepEffectiveDuration}
+                      isEditable={isEditable}
+                      onPointMoved={onPointMoved}
+                    />
+                  )}
                 </div>
               </div>
             ) : (
               /* Portrait 9:16 Layout for Geometry */
               <div className="flex flex-col h-full gap-2.5">
                 <div className="h-[46%] bg-white rounded-2xl border border-slate-200 p-2 shadow-xs flex items-center justify-center relative overflow-hidden">
-                  <GeometryRenderer
-                    scene={lesson.geometryScene}
-                    currentStep={currentStep}
-                    stepProgress={stepProgress}
-                    stepEffectiveDuration={stepEffectiveDuration}
-                    isEditable={isEditable}
-                    onPointMoved={onPointMoved}
-                  />
+                  {lesson.module ? (
+                    <LessonModuleCanvas
+                      module={lesson.module}
+                      stepIndex={currentStepIndex}
+                      progress={stepProgress}
+                      isPortrait={true}
+                    />
+                  ) : (
+                    <GeometryRenderer
+                      scene={lesson.geometryScene}
+                      currentStep={currentStep}
+                      stepProgress={stepProgress}
+                      stepEffectiveDuration={stepEffectiveDuration}
+                      isEditable={isEditable}
+                      onPointMoved={onPointMoved}
+                    />
+                  )}
                 </div>
                 <div className="flex-1 min-h-0 flex flex-col">
                   {model.isGeometryProblemPhase ? (

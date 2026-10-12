@@ -151,6 +151,10 @@ export interface LessonStep {
   highlightedObjectIds?: string[]; // Các ID hình học được highlight tại bước này
 }
 
+import type { LessonModule, LessonModuleStep, LessonViewport } from './lessonModule.ts';
+
+export type { LessonModule, LessonModuleStep, LessonViewport };
+
 export interface LessonScript {
   title: string;
   problemType: ProblemType;
@@ -158,6 +162,7 @@ export interface LessonScript {
   presentation?: LessonPresentationSettings;
   geometryScene?: GeometryScene;
   steps: LessonStep[];
+  module?: LessonModule;
 }
 
 export interface ChoiceOption {

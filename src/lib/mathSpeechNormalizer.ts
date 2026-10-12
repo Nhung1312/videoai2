@@ -9,18 +9,18 @@ export function normalizeMathToVietnameseSpeech(latexOrText: string): string {
   let speech = latexOrText.trim();
 
   // 1. Common Vietnamese Geometry phrases & abbreviations
-  speech = speech.replace(/\\Delta\s*([A-Z]{3})/g, 'tam giác $1');
-  speech = speech.replace(/\\triangle\s*([A-Z]{3})/g, 'tam giác $1');
-  speech = speech.replace(/\\widehat\{([A-Z]{3})\}/g, 'góc $1');
-  speech = speech.replace(/\\angle\s*([A-Z]{3})/g, 'góc $1');
-  speech = speech.replace(/\\widehat\{([A-Z])\}/g, 'góc $1');
-  speech = speech.replace(/\\angle\s*([A-Z])/g, 'góc $1');
+  speech = speech.replace(/\\Delta\s*([A-Z]{1,4})/g, 'tam giác $1');
+  speech = speech.replace(/\\triangle\s*([A-Z]{1,4})/g, 'tam giác $1');
+  speech = speech.replace(/[△▲]\s*([A-Z]{1,4})/g, 'tam giác $1');
+  speech = speech.replace(/\\widehat\{([A-Z]{1,4})\}/g, 'góc $1');
+  speech = speech.replace(/\\angle\s*([A-Z]{1,4})/g, 'góc $1');
+  speech = speech.replace(/∠\s*([A-Z]{1,4})/g, 'góc $1');
 
-  // Geometric relations
-  speech = speech.replace(/\\perp/g, ' vuông góc với ');
-  speech = speech.replace(/\\parallel/g, ' song song với ');
-  speech = speech.replace(/\\sim/g, ' đồng dạng với ');
-  speech = speech.replace(/\\cong/g, ' bằng ');
+  // Geometric relations (LaTeX and Unicode)
+  speech = speech.replace(/(\\perp|[⊥⟂])/g, ' vuông góc với ');
+  speech = speech.replace(/(\\parallel|[∥]|(?<=[A-Z0-9\s])\/\/(?=[A-Z0-9\s]))/g, ' song song với ');
+  speech = speech.replace(/(\\sim|[∼])/g, ' đồng dạng với ');
+  speech = speech.replace(/(\\cong|[≅≡])/g, ' bằng ');
 
   // Logic connectors
   speech = speech.replace(/\\iff/g, ' tương đương ');
@@ -84,6 +84,7 @@ export function normalizeMathToVietnameseSpeech(latexOrText: string): string {
   speech = speech.replace(/\\begin\{[a-zA-Z]+\}/g, '');
   speech = speech.replace(/\\end\{[a-zA-Z]+\}/g, '');
   speech = speech.replace(/\\\\/g, ', ');
+  speech = speech.replace(/[\r\n]+/g, ', ');
 
   // Basic math characters
   speech = speech.replace(/=/g, ' bằng ');

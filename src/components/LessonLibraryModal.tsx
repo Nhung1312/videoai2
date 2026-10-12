@@ -325,6 +325,12 @@ export const LessonLibraryModal: React.FC<LessonLibraryModalProps> = ({
                       </span>
 
                       {/* Source badge */}
+                      {(entry.moduleId || entry.lesson.module) && (
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                          <FileCode className="w-2.5 h-2.5" />
+                          Lesson Module
+                        </span>
+                      )}
                       {entry.source === 'ai' && (
                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-purple-500/15 text-purple-300 border border-purple-500/30 flex items-center gap-1">
                           <Sparkles className="w-2.5 h-2.5" />
