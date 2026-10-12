@@ -1,6 +1,6 @@
 /** Shared, immutable TTS policy. Standard Gemini TTS model for high throughput & stability. */
 export const TTS_MODEL = 'gemini-3.8-flash-lite-tts';
-export const TTS_PROFILE_VERSION = 'kore-v1';
+export const TTS_PROFILE_VERSION = 'kore-v2-unicode';
 export const TTS_STYLE_VERSION = 'vn-teacher-v1';
 export const TTS_STYLE = 'Giọng NỮ giáo viên Việt Nam, tự nhiên, ấm áp, rõ chữ, tốc độ vừa phải. Đọc ký hiệu Toán theo tên chữ cái đã viết trong transcript; tuyệt đối không đánh vần theo âm hờ, bờ, cờ. Ngắt nghỉ nhẹ ở dấu phẩy và giữa các bước suy luận. Không đọc kiểu quảng cáo, không lên giọng máy móc.';
 
