@@ -9,6 +9,7 @@ import { ScriptEditorModal } from './components/ScriptEditorModal';
 import { ExportVideoModal } from './components/ExportVideoModal';
 import { SaveLessonModal } from './components/SaveLessonModal';
 import { LessonLibraryModal } from './components/LessonLibraryModal';
+import { HtmlLessonPlayerModal } from './components/HtmlLessonPlayerModal';
 import { AudioEngine } from './lib/audioEngine';
 import { DraftStorage } from './lib/draftStorage';
 import { LessonStorage, SavedLessonEntry } from './lib/lessonStorage';
@@ -33,6 +34,7 @@ export default function App() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [isLibraryModalOpen, setIsLibraryModalOpen] = useState(false);
+  const [isHtmlLessonModalOpen, setIsHtmlLessonModalOpen] = useState(false);
   const [savedLessonsCount, setSavedLessonsCount] = useState<number>(() => {
     return LessonStorage.getAll().length;
   });
@@ -289,6 +291,19 @@ export default function App() {
             </button>
 
             <button
+              onClick={() => {
+                AudioEngine.pause();
+                timeline.pause();
+                setIsHtmlLessonModalOpen(true);
+              }}
+              className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-500 text-white shadow-md shadow-violet-600/20 transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
+              title="Nhập HTML bài giảng có narrationScript và tự phát giọng Kore"
+            >
+              <Volume2 className="w-3.5 h-3.5" />
+              <span>HTML + Kore</span>
+            </button>
+
+            <button
               onClick={() => setIsExportModalOpen(true)}
               className="px-4 py-1.5 rounded-xl text-xs font-bold bg-linear-to-r from-amber-500 via-rose-500 to-pink-500 hover:from-amber-400 hover:via-rose-400 hover:to-pink-400 text-white shadow-md shadow-amber-500/20 transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
               title="Xuất video MP4/WebM bài giảng hoạt hình"
@@ -487,6 +502,12 @@ export default function App() {
         onSelectLesson={handleSelectLessonFromLibrary}
         onOpenSaveCurrent={() => setIsSaveModalOpen(true)}
       />
+
+      <HtmlLessonPlayerModal
+        isOpen={isHtmlLessonModalOpen}
+        onClose={() => setIsHtmlLessonModalOpen(false)}
+      />
+
     </div>
   );
 }
