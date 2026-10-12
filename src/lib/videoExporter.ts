@@ -334,7 +334,7 @@ export class VideoExporter {
     const bodyHeight = height - bodyTop - bottomSubtitleHeight - Math.round(height * 0.02);
     const pad = Math.round(width * 0.025);
 
-    if (model.hasGeometry && lesson.geometryScene) {
+    if (model.hasGeometry && (lesson.geometryScene || lesson.module)) {
       if (options.aspectRatio === '16:9') {
         // Landscape 16:9: match Preview architecture.
         // Problem phase = progressive statement only. Solution phase = cumulative board.
