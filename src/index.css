@@ -1,0 +1,49 @@
+@import "tailwindcss";
+@import "katex/dist/katex.min.css";
+
+/* Inline flow keeps the parser's spaces and native baselines, without flex gaps. */
+.mixed-math-prose {
+  font-family: "Segoe UI", Arial, "Noto Sans", sans-serif;
+  font-style: normal;
+  white-space: pre-wrap;
+}
+.mixed-math-formula {
+  vertical-align: baseline;
+}
+.mixed-math-text .katex {
+  font-size: 1em;
+}
+
+
+/* Lesson board: keep scrolling functional but invisible in Preview/video. */
+.lesson-board-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior: contain;
+}
+.lesson-board-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* KaTeX on the board should behave like handwriting on a board, not a wide widget. */
+.lesson-board-scroll .katex-display {
+  margin: 0.2rem 0 0.35rem;
+  text-align: left;
+  overflow: visible;
+}
+.lesson-board-scroll .katex-display > .katex {
+  text-align: left;
+  max-width: 100%;
+}
+
+
+/* Vietnamese prose inside KaTeX \text{...} must use a normal reading font. */
+.lesson-board-scroll .katex .text,
+.lesson-board-scroll .katex .text * {
+  font-family: "Segoe UI", Arial, "Noto Sans", sans-serif !important;
+  font-style: normal !important;
+  font-weight: 500 !important;
+  letter-spacing: normal !important;
+}

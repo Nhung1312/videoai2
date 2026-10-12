@@ -1,0 +1,6 @@
+{
+  "name": "AI Math Video Studio",
+  "description": "Biến đề Toán THCS thành bài giảng hoạt hình tự động với công thức KaTeX và hình học trực quan.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
