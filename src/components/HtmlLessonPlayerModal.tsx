@@ -6,7 +6,6 @@ import {
   FileCode,
   Play,
   RefreshCw,
-  Square,
   Upload,
   Volume2,
   X,
@@ -320,7 +319,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
   };
 
   const startHtmlRecording = async () => {
-    if (!runningHtml || !rawHtml || cues.length === 0 || !lessonId || isRecording) return;
+    if (!rawHtml || cues.length === 0 || !lessonId || isRecording) return;
 
     if (!navigator.mediaDevices?.getDisplayMedia || typeof MediaRecorder === 'undefined') {
       setError('Trình duyệt này chưa hỗ trợ ghi video trực tiếp. Hãy dùng Chrome/Cốc Cốc bản mới.');
@@ -328,6 +327,17 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
     }
 
     setError(null);
+
+    const missingCue = cues.find((cue) => {
+      const narration = normalizeHtmlNarration(cue.narration);
+      return !AudioEngine.hasCachedAudio(`${lessonId}:${cue.id}`, narration, 'Kore');
+    });
+
+    if (missingCue) {
+      setError('Hãy bấm “Chuẩn bị Kore & Chạy” ít nhất một lần trước khi xuất video.');
+      return;
+    }
+
     setRecordingStatus('Đang mở hộp chọn tab. Hãy chọn chính tab này và bật chia sẻ âm thanh.');
 
     try {
@@ -410,6 +420,8 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
         link.remove();
         window.setTimeout(() => URL.revokeObjectURL(url), 3000);
 
+        activeSessionRef.current = '';
+        setRunningHtml('');
         setRecordingStatus('Đã xuất video WebM có tiếng Kore.');
         setStatus('Xuất video HTML + Kore hoàn tất.');
       };
@@ -419,6 +431,8 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
         if (recorder.state === 'recording') recorder.stop();
       });
 
+      activeSessionRef.current = '';
+      setRunningHtml('');
       setIsRecording(true);
       await new Promise<void>((resolve) =>
         requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
@@ -551,7 +565,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
 
             <button
               onClick={replay}
-              disabled={!runningHtml || isPreparing}
+              disabled={!rawHtml || cues.length === 0 || isPreparing}
               className="w-full px-4 py-2 rounded-xl font-semibold text-xs bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 flex items-center justify-center gap-2 cursor-pointer"
             >
               <Play className="w-3.5 h-3.5" />
@@ -560,7 +574,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
 
             <button
               onClick={startHtmlRecording}
-              disabled={!runningHtml || isPreparing || isRecording}
+              disabled={!rawHtml || cues.length === 0 || isPreparing || isRecording}
               className="w-full px-4 py-2.5 rounded-xl font-bold text-xs bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white flex items-center justify-center gap-2 cursor-pointer"
             >
               <Download className="w-4 h-4" />
