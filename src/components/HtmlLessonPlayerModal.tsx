@@ -14,6 +14,7 @@ import { AudioEngine } from '../lib/audioEngine';
 import {
   HtmlNarrationCue,
   injectHtmlNarrationBridge,
+  injectHtmlRecordingLayout,
   normalizeHtmlNarration,
   stableHtmlLessonId,
   validateHtmlLesson,
@@ -39,6 +40,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const captureStreamRef = useRef<MediaStream | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
+  const recordingTargetRef = useRef<HTMLDivElement | null>(null);
 
   const [fileName, setFileName] = useState<string | null>(null);
   const [rawHtml, setRawHtml] = useState('');
@@ -338,6 +340,15 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       return;
     }
 
+    activeSessionRef.current = '';
+    setRunningHtml('');
+    setIsRecording(true);
+    setRecordingStatus('Đang chuẩn bị khung dọc 9:16...');
+
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    );
+
     setRecordingStatus('Đang mở hộp chọn tab. Hãy chọn chính tab này và bật chia sẻ âm thanh.');
 
     try {
@@ -352,6 +363,32 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
         stream.getTracks().forEach((track) => track.stop());
         throw new Error(
           'Chưa có âm thanh trong bản ghi. Khi chọn tab, hãy bật “Chia sẻ âm thanh của tab”.'
+        );
+      }
+
+      const videoTrack = stream.getVideoTracks()[0];
+      let croppedToLesson = false;
+      const CropTargetApi = (window as any).CropTarget;
+
+      if (
+        videoTrack &&
+        recordingTargetRef.current &&
+        CropTargetApi?.fromElement &&
+        typeof (videoTrack as any).cropTo === 'function'
+      ) {
+        try {
+          const cropTarget = await CropTargetApi.fromElement(recordingTargetRef.current);
+          await (videoTrack as any).cropTo(cropTarget);
+          croppedToLesson = true;
+          setRecordingStatus('Đã cắt đúng khung dọc 9:16, không lấy phần đen hai bên.');
+        } catch (cropError) {
+          console.warn('Region Capture unavailable:', cropError);
+        }
+      }
+
+      if (!croppedToLesson) {
+        setRecordingStatus(
+          'Trình duyệt chưa hỗ trợ cắt vùng tự động. Khung bài vẫn được phóng đầy 9:16 nhưng file có thể còn viền ngoài.'
         );
       }
 
@@ -431,13 +468,6 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
         if (recorder.state === 'recording') recorder.stop();
       });
 
-      activeSessionRef.current = '';
-      setRunningHtml('');
-      setIsRecording(true);
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
-      );
-
       recorder.start(1000);
       setRecordingStatus('Đang ghi video. Bài sẽ tự chạy lại từ đầu và tự lưu khi kết thúc.');
 
@@ -449,7 +479,13 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       narrationQueueRef.current = Promise.resolve();
 
       setSessionId(nextSession);
-      setRunningHtml(injectHtmlNarrationBridge(rawHtml, nextSession, lessonId));
+      setRunningHtml(
+        injectHtmlNarrationBridge(
+          injectHtmlRecordingLayout(rawHtml),
+          nextSession,
+          lessonId
+        )
+      );
       setRunKey((value) => value + 1);
       setStatus('Đang ghi video HTML + Kore...');
     } catch (err: any) {
@@ -473,15 +509,25 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
 
   if (isRecording) {
     return (
-      <div className="fixed inset-0 z-[9999] bg-black">
-        <iframe
-          key={`recording-${runKey}-${sessionId}`}
-          ref={iframeRef}
-          title="HTML lesson recording"
-          srcDoc={runningHtml}
-          sandbox="allow-scripts"
-          className="w-screen h-screen border-0 bg-black"
-        />
+      <div className="fixed inset-0 z-[9999] bg-black flex items-center justify-center overflow-hidden">
+        <div
+          ref={recordingTargetRef}
+          className="bg-black overflow-hidden"
+          style={{
+            width: 'min(100vw, 56.25vh)',
+            height: 'min(100vh, 177.7778vw)',
+            aspectRatio: '9 / 16',
+          }}
+        >
+          <iframe
+            key={`recording-${runKey}-${sessionId}`}
+            ref={iframeRef}
+            title="HTML lesson recording"
+            srcDoc={runningHtml}
+            sandbox="allow-scripts"
+            className="w-full h-full border-0 bg-black"
+          />
+        </div>
       </div>
     );
   }
