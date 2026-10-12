@@ -142,13 +142,31 @@ export const validateHtmlLesson = (html: string): HtmlLessonValidation => {
 
 export const normalizeHtmlNarration = (text: string): string =>
   text
-    // Variable m in Vietnamese math narration is read "mờ".
-    // Do NOT convert "mờ" to the letter-name "em" (that is suitable for point M, not variable m).
-    .replace(/\bm\b/g, 'mờ')
+    // Common Vietnamese math pronunciation cleanup for imported HTML narration.
+    // Lowercase m is the algebra variable "mờ"; uppercase M as a geometry point is handled elsewhere.
+    .replace(/\bPT\b/gi, 'phương trình')
+    .replace(/\bPB\b/gi, 'phân biệt')
+    .replace(/\bt\s*\/\s*m\b/gi, 'thỏa mãn')
+    .replace(/(?:Δ|\\Delta)\s*['’′]/g, 'đen-ta phẩy')
+    .replace(/(?:Δ|\\Delta)/g, 'đen-ta')
+    .replace(/\b(?:đen\s*ta|delta)\s*phẩy\b/gi, 'đen-ta phẩy')
+    .replace(/\b(?:đen\s*ta|delta)\b/gi, 'đen-ta')
+    .replace(/x\s*[_₁]?1\b/gi, 'ích một')
+    .replace(/x\s*[_₂]?2\b/gi, 'ích hai')
+    .replace(/x₁/gi, 'ích một')
+    .replace(/x₂/gi, 'ích hai')
+    .replace(/\bx\b/gi, 'ích')
+    .replace(/m²/g, 'mờ bình phương')
+    .replace(/\bm\s*\^\s*2\b/gi, 'mờ bình phương')
+    .replace(/\bm\b/gi, 'mờ')
+    .replace(/\bb\b/gi, 'bê')
+    .replace(/\bc\b/gi, 'xê')
     .replace(
-      /(ích\s+(?:một|hai|ba|bốn|năm|sáu|bảy|tám|chín|\d+))\s+bình(?!\s+phương)/gi,
+      /(ích\s+(?:một|hai|ba|bốn|năm|sáu|bảy|tám|chín|\d+))\s+(?:bình|bình\s*phương?)(?!\s+phương)/gi,
       '$1 bình phương'
     )
+    .replace(/\bích\s+bình(?!\s+phương)/gi, 'ích bình phương')
+    .replace(/\bmờ\s+bình(?!\s+phương)/gi, 'mờ bình phương')
     .replace(/\s+/g, ' ')
     .trim();
 
