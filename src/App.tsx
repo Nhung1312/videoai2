@@ -9,7 +9,8 @@ import { ScriptEditorModal } from './components/ScriptEditorModal';
 import { ExportVideoModal } from './components/ExportVideoModal';
 import { SaveLessonModal } from './components/SaveLessonModal';
 import { LessonLibraryModal } from './components/LessonLibraryModal';
-import { ImportLessonModuleModal } from './components/ImportLessonModuleModal';\nimport { HtmlLessonPlayerModal } from './components/HtmlLessonPlayerModal';
+import { ImportLessonModuleModal } from './components/ImportLessonModuleModal';
+import { HtmlLessonPlayerModal } from './components/HtmlLessonPlayerModal';
 import { AudioEngine } from './lib/audioEngine';
 import { DraftStorage } from './lib/draftStorage';
 import { LessonStorage, SavedLessonEntry } from './lib/lessonStorage';
@@ -35,7 +36,8 @@ export default function App() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [isLibraryModalOpen, setIsLibraryModalOpen] = useState(false);
-  const [isImportModuleModalOpen, setIsImportModuleModalOpen] = useState(false);\n  const [isHtmlLessonModalOpen, setIsHtmlLessonModalOpen] = useState(false);
+  const [isImportModuleModalOpen, setIsImportModuleModalOpen] = useState(false);
+  const [isHtmlLessonModalOpen, setIsHtmlLessonModalOpen] = useState(false);
   const [savedLessonsCount, setSavedLessonsCount] = useState<number>(() => {
     return LessonStorage.getAll().length;
   });
