@@ -226,40 +226,36 @@ export const injectHtmlNarrationBridge = (
     });
   };
 
-  window.addEventListener('load', () => {
-    window.setTimeout(() => {
-      const originalStart = window.startAnimation;
-      if (typeof originalStart !== 'function' || originalStart.__videoai2Wrapped) return;
+  const originalStart = window.startAnimation;
+  if (typeof originalStart === 'function' && !originalStart.__videoai2Wrapped) {
+    const wrappedStart = async function(...args) {
+      try {
+        return await originalStart.apply(this, args);
+      } finally {
+        window.parent.postMessage(
+          {
+            source: 'videoai2-html-lesson',
+            type: 'lesson-complete',
+            sessionId: SESSION_ID,
+            lessonId: LESSON_ID
+          },
+          '*'
+        );
+      }
+    };
 
-      const wrappedStart = async function(...args) {
-        try {
-          return await originalStart.apply(this, args);
-        } finally {
-          window.parent.postMessage(
-            {
-              source: 'videoai2-html-lesson',
-              type: 'lesson-complete',
-              sessionId: SESSION_ID,
-              lessonId: LESSON_ID
-            },
-            '*'
-          );
-        }
-      };
-
-      wrappedStart.__videoai2Wrapped = true;
-      window.startAnimation = wrappedStart;
-    }, 0);
-  });
+    wrappedStart.__videoai2Wrapped = true;
+    window.startAnimation = wrappedStart;
+  }
 })();
 <\/script>
 `;
 
-  if (/<\/head>/i.test(html)) {
-    return html.replace(/<\/head>/i, `${bridge}</head>`);
+  if (/<\/body>/i.test(html)) {
+    return html.replace(/<\/body>/i, `${bridge}</body>`);
   }
   if (/<body[\s>]/i.test(html)) {
     return html.replace(/<body([^>]*)>/i, `<body$1>${bridge}`);
   }
-  return bridge + html;
+  return html + bridge;
 };
