@@ -432,7 +432,8 @@ class AudioEngineClass {
    */
   public async preloadLesson(
     steps: { id: string; narration: string; title?: string }[],
-    voiceName = this.settings.voiceName
+    voiceName = this.settings.voiceName,
+    onProgress?: (ready: number, total: number, stepId?: string) => void
   ): Promise<PreloadLessonResult> {
     if (!this.settings.enabled) {
       return { ready: 0, failed: 0, total: 0, quotaExceeded: false };
@@ -451,6 +452,8 @@ class AudioEngineClass {
       return { ready: 0, failed: 0, total: 0, quotaExceeded: false };
     }
 
+    onProgress?.(0, narratedSteps.length);
+
     let ready = 0;
     let failed = 0;
     let firstFailedStepIndex: number | undefined;
@@ -467,6 +470,7 @@ class AudioEngineClass {
       // Requirement 2: KHÔNG tạo lại clip đã thành công. Chỉ retry những step còn thiếu audio.
       if (this.hasCachedAudio(step.id, text, voiceName)) {
         ready++;
+        onProgress?.(ready, narratedSteps.length, step.id);
         continue;
       }
 
@@ -495,6 +499,7 @@ class AudioEngineClass {
 
       if (loaded) {
         ready++;
+        onProgress?.(ready, narratedSteps.length, step.id);
         // Gentle gap between successful step generations
         if (!this.isQuotaExceeded) {
           await new Promise((resolve) => setTimeout(resolve, 300));
