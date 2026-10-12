@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import html2canvas from 'html2canvas';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -40,7 +41,8 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const captureStreamRef = useRef<MediaStream | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
-  const recordingTargetRef = useRef<HTMLDivElement | null>(null);
+  const recordingAudioDestinationRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const stopFrameCaptureRef = useRef<(() => void) | null>(null);
 
   const [fileName, setFileName] = useState<string | null>(null);
   const [rawHtml, setRawHtml] = useState('');
@@ -90,6 +92,9 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
     source.buffer = audioBuffer;
     source.playbackRate.value = AudioEngine.getPlaybackRateMultiplier();
     source.connect(ctx.destination);
+    if (recordingAudioDestinationRef.current) {
+      source.connect(recordingAudioDestinationRef.current);
+    }
     activeSourceRef.current = source;
 
     await new Promise<void>((resolve, reject) => {
@@ -106,6 +111,9 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
   };
 
   const stopHtmlRecording = () => {
+    stopFrameCaptureRef.current?.();
+    stopFrameCaptureRef.current = null;
+
     const recorder = recorderRef.current;
     if (recorder && recorder.state !== 'inactive') {
       recorder.stop();
@@ -114,6 +122,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
 
     captureStreamRef.current?.getTracks().forEach((track) => track.stop());
     captureStreamRef.current = null;
+    recordingAudioDestinationRef.current = null;
     recorderRef.current = null;
     setIsRecording(false);
   };
@@ -201,8 +210,11 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       if (recorderRef.current && recorderRef.current.state !== 'inactive') {
         recorderRef.current.stop();
       }
+      stopFrameCaptureRef.current?.();
+      stopFrameCaptureRef.current = null;
       captureStreamRef.current?.getTracks().forEach((track) => track.stop());
       captureStreamRef.current = null;
+      recordingAudioDestinationRef.current = null;
       audioContextRef.current?.close().catch(() => {});
       audioContextRef.current = null;
     };
@@ -320,13 +332,172 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
     setStatus('Đang chạy lại bài với giọng Kore đã cache...');
   };
 
-  const startHtmlRecording = async () => {
-    if (!rawHtml || cues.length === 0 || !lessonId || isRecording) return;
+  const beginCanvasRecording = async () => {
+    if (!isRecording || recorderRef.current || !iframeRef.current) return;
 
-    if (!navigator.mediaDevices?.getDisplayMedia || typeof MediaRecorder === 'undefined') {
-      setError('Trình duyệt này chưa hỗ trợ ghi video trực tiếp. Hãy dùng Chrome/Cốc Cốc bản mới.');
+    const iframe = iframeRef.current;
+    const doc = iframe.contentDocument;
+    if (!doc) {
+      setError('Không truy cập được nội dung HTML để dựng video.');
+      setIsRecording(false);
       return;
     }
+
+    try {
+      const audioCtx = await ensureAudioContext();
+      const audioDestination = audioCtx.createMediaStreamDestination();
+      recordingAudioDestinationRef.current = audioDestination;
+
+      const outputCanvas = document.createElement('canvas');
+      outputCanvas.width = 720;
+      outputCanvas.height = 1280;
+      const outputCtx = outputCanvas.getContext('2d', { alpha: false });
+      if (!outputCtx) throw new Error('Không khởi tạo được Canvas xuất video.');
+
+      outputCtx.fillStyle = '#000';
+      outputCtx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+
+      const canvasStream = outputCanvas.captureStream(30);
+      const combinedStream = new MediaStream([
+        ...canvasStream.getVideoTracks(),
+        ...audioDestination.stream.getAudioTracks(),
+      ]);
+      captureStreamRef.current = combinedStream;
+      recordingChunksRef.current = [];
+
+      const mimeCandidates = [
+        'video/mp4',
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm',
+      ];
+      const mimeType =
+        mimeCandidates.find((type) => MediaRecorder.isTypeSupported(type)) || 'video/webm';
+
+      const recorder = new MediaRecorder(combinedStream, {
+        mimeType,
+        videoBitsPerSecond: 6_000_000,
+        audioBitsPerSecond: 192_000,
+      });
+      recorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) recordingChunksRef.current.push(event.data);
+      };
+
+      recorder.onerror = () => {
+        setError('Có lỗi khi mã hóa video HTML + Kore.');
+      };
+
+      recorder.onstop = () => {
+        stopFrameCaptureRef.current?.();
+        stopFrameCaptureRef.current = null;
+
+        const chunks = recordingChunksRef.current;
+        recordingChunksRef.current = [];
+
+        captureStreamRef.current?.getTracks().forEach((track) => track.stop());
+        captureStreamRef.current = null;
+        recordingAudioDestinationRef.current = null;
+        recorderRef.current = null;
+        setIsRecording(false);
+
+        if (chunks.length === 0) {
+          setError('Không nhận được dữ liệu video để lưu.');
+          setRecordingStatus('');
+          return;
+        }
+
+        const type = recorder.mimeType || mimeType || 'video/webm';
+        const blob = new Blob(chunks, { type });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const baseName =
+          (fileName || 'html-kore')
+            .replace(/\.html?$/i, '')
+            .replace(/[^a-zA-Z0-9_-]+/g, '-')
+            .replace(/^-+|-+$/g, '') || 'html-kore';
+        const ext = type.includes('mp4') ? 'mp4' : 'webm';
+
+        link.href = url;
+        link.download = `${baseName}-Kore-9x16.${ext}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 3000);
+
+        activeSessionRef.current = '';
+        setRunningHtml('');
+        setRecordingStatus(`Đã xuất video ${ext.toUpperCase()} 9:16 có tiếng Kore.`);
+        setStatus('Xuất video HTML + Kore hoàn tất.');
+      };
+
+      recorder.start(500);
+      setRecordingStatus('Đang dựng video trực tiếp từ Canvas 9:16, không cần quyền quay màn hình...');
+
+      let stopped = false;
+      stopFrameCaptureRef.current = () => {
+        stopped = true;
+      };
+
+      const renderFrame = async () => {
+        if (stopped) return;
+
+        try {
+          const target =
+            (doc.querySelector('.container') as HTMLElement | null) || doc.body;
+          const targetWidth = Math.max(1, target.clientWidth || 405);
+          const targetHeight = Math.max(1, target.clientHeight || 720);
+
+          const snapshot = await html2canvas(target, {
+            backgroundColor: '#000000',
+            logging: false,
+            useCORS: true,
+            scale: 1,
+            width: targetWidth,
+            height: targetHeight,
+            windowWidth: targetWidth,
+            windowHeight: targetHeight,
+          });
+
+          outputCtx.fillStyle = '#000';
+          outputCtx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+          outputCtx.drawImage(
+            snapshot,
+            0,
+            0,
+            snapshot.width,
+            snapshot.height,
+            0,
+            0,
+            outputCanvas.width,
+            outputCanvas.height
+          );
+        } catch (captureError) {
+          console.warn('HTML frame capture warning:', captureError);
+        }
+
+        if (!stopped) {
+          window.setTimeout(renderFrame, 80);
+        }
+      };
+
+      void renderFrame();
+    } catch (err: any) {
+      stopFrameCaptureRef.current?.();
+      stopFrameCaptureRef.current = null;
+      captureStreamRef.current?.getTracks().forEach((track) => track.stop());
+      captureStreamRef.current = null;
+      recordingAudioDestinationRef.current = null;
+      recorderRef.current = null;
+      setIsRecording(false);
+      setRecordingStatus('');
+      setError(err?.message || 'Không bắt đầu được xuất video HTML + Kore.');
+    }
+  };
+
+  const startHtmlRecording = async () => {
+    if (!rawHtml || cues.length === 0 || !lessonId || isRecording) return;
 
     setError(null);
 
@@ -340,162 +511,25 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       return;
     }
 
-    activeSessionRef.current = '';
-    setRunningHtml('');
+    stopActiveAudio();
+    await ensureAudioContext();
+
+    const nextSession = makeSessionId();
+    activeSessionRef.current = nextSession;
+    narrationQueueRef.current = Promise.resolve();
+
+    setSessionId(nextSession);
     setIsRecording(true);
-    setRecordingStatus('Đang chuẩn bị khung dọc 9:16...');
-
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    setRecordingStatus('Đang mở khung dựng video 9:16...');
+    setRunningHtml(
+      injectHtmlNarrationBridge(
+        injectHtmlRecordingLayout(rawHtml),
+        nextSession,
+        lessonId
+      )
     );
-
-    setRecordingStatus('Đang mở hộp chọn tab. Hãy chọn chính tab này và bật chia sẻ âm thanh.');
-
-    try {
-      await ensureAudioContext();
-
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 30 },
-        audio: true,
-      });
-
-      if (stream.getAudioTracks().length === 0) {
-        stream.getTracks().forEach((track) => track.stop());
-        throw new Error(
-          'Chưa có âm thanh trong bản ghi. Khi chọn tab, hãy bật “Chia sẻ âm thanh của tab”.'
-        );
-      }
-
-      const videoTrack = stream.getVideoTracks()[0];
-      let croppedToLesson = false;
-      const CropTargetApi = (window as any).CropTarget;
-
-      if (
-        videoTrack &&
-        recordingTargetRef.current &&
-        CropTargetApi?.fromElement &&
-        typeof (videoTrack as any).cropTo === 'function'
-      ) {
-        try {
-          const cropTarget = await CropTargetApi.fromElement(recordingTargetRef.current);
-          await (videoTrack as any).cropTo(cropTarget);
-          croppedToLesson = true;
-          setRecordingStatus('Đã cắt đúng khung dọc 9:16, không lấy phần đen hai bên.');
-        } catch (cropError) {
-          console.warn('Region Capture unavailable:', cropError);
-        }
-      }
-
-      if (!croppedToLesson) {
-        setRecordingStatus(
-          'Trình duyệt chưa hỗ trợ cắt vùng tự động. Khung bài vẫn được phóng đầy 9:16 nhưng file có thể còn viền ngoài.'
-        );
-      }
-
-      captureStreamRef.current = stream;
-      recordingChunksRef.current = [];
-
-      const mimeCandidates = [
-        'video/webm;codecs=vp9,opus',
-        'video/webm;codecs=vp8,opus',
-        'video/webm',
-      ];
-      const mimeType =
-        mimeCandidates.find((type) => MediaRecorder.isTypeSupported(type)) || '';
-
-      const recorder = new MediaRecorder(
-        stream,
-        mimeType
-          ? {
-              mimeType,
-              videoBitsPerSecond: 8_000_000,
-              audioBitsPerSecond: 192_000,
-            }
-          : {
-              videoBitsPerSecond: 8_000_000,
-              audioBitsPerSecond: 192_000,
-            }
-      );
-
-      recorderRef.current = recorder;
-
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) recordingChunksRef.current.push(event.data);
-      };
-
-      recorder.onerror = () => {
-        setError('Có lỗi khi ghi video HTML + Kore.');
-      };
-
-      recorder.onstop = () => {
-        const chunks = recordingChunksRef.current;
-        recordingChunksRef.current = [];
-
-        captureStreamRef.current?.getTracks().forEach((track) => track.stop());
-        captureStreamRef.current = null;
-        recorderRef.current = null;
-        setIsRecording(false);
-
-        if (chunks.length === 0) {
-          setError('Không nhận được dữ liệu video để lưu.');
-          setRecordingStatus('');
-          return;
-        }
-
-        const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        const baseName = (fileName || 'html-kore')
-          .replace(/\.html?$/i, '')
-          .replace(/[^a-zA-Z0-9_-]+/g, '-')
-          .replace(/^-+|-+$/g, '') || 'html-kore';
-
-        link.href = url;
-        link.download = `${baseName}-Kore.webm`;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.setTimeout(() => URL.revokeObjectURL(url), 3000);
-
-        activeSessionRef.current = '';
-        setRunningHtml('');
-        setRecordingStatus('Đã xuất video WebM có tiếng Kore.');
-        setStatus('Xuất video HTML + Kore hoàn tất.');
-      };
-
-      const videoTrack = stream.getVideoTracks()[0];
-      videoTrack?.addEventListener('ended', () => {
-        if (recorder.state === 'recording') recorder.stop();
-      });
-
-      recorder.start(1000);
-      setRecordingStatus('Đang ghi video. Bài sẽ tự chạy lại từ đầu và tự lưu khi kết thúc.');
-
-      await new Promise((resolve) => window.setTimeout(resolve, 500));
-
-      stopActiveAudio();
-      const nextSession = makeSessionId();
-      activeSessionRef.current = nextSession;
-      narrationQueueRef.current = Promise.resolve();
-
-      setSessionId(nextSession);
-      setRunningHtml(
-        injectHtmlNarrationBridge(
-          injectHtmlRecordingLayout(rawHtml),
-          nextSession,
-          lessonId
-        )
-      );
-      setRunKey((value) => value + 1);
-      setStatus('Đang ghi video HTML + Kore...');
-    } catch (err: any) {
-      captureStreamRef.current?.getTracks().forEach((track) => track.stop());
-      captureStreamRef.current = null;
-      recorderRef.current = null;
-      setIsRecording(false);
-      setRecordingStatus('');
-      setError(err?.message || 'Không bắt đầu được ghi video HTML + Kore.');
-    }
+    setRunKey((value) => value + 1);
+    setStatus('Đang xuất video HTML + Kore bằng Canvas...');
   };
 
   const close = () => {
@@ -511,8 +545,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
     return (
       <div className="fixed inset-0 z-[9999] bg-black flex items-center justify-center overflow-hidden">
         <div
-          ref={recordingTargetRef}
-          className="bg-black overflow-hidden"
+          className="bg-black overflow-hidden shadow-2xl"
           style={{
             width: 'min(100vw, 56.25vh)',
             height: 'min(100vh, 177.7778vw)',
@@ -524,7 +557,8 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
             ref={iframeRef}
             title="HTML lesson recording"
             srcDoc={runningHtml}
-            sandbox="allow-scripts"
+            sandbox="allow-scripts allow-same-origin"
+            onLoad={() => void beginCanvasRecording()}
             className="w-full h-full border-0 bg-black"
           />
         </div>
@@ -634,8 +668,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
             )}
 
             <div className="text-[11px] leading-relaxed text-slate-500">
-              Khi xuất video: chọn <strong className="text-slate-400">tab hiện tại</strong> và bật
-              <strong className="text-slate-400"> Chia sẻ âm thanh</strong>. Video WebM sẽ tự tải khi bài kết thúc.
+              Xuất video dựng trực tiếp từ Canvas 9:16 + giọng Kore, không cần quyền quay màn hình. File sẽ tự tải khi bài kết thúc.
             </div>
 
             <div className="text-[11px] leading-relaxed text-slate-500 border-t border-slate-800 pt-3">
