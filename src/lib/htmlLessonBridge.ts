@@ -155,12 +155,12 @@ export const normalizeHtmlNarration = (text: string): string =>
     .replace(/x\s*[_₂]?2\b/gi, 'ích hai')
     .replace(/x₁/gi, 'ích một')
     .replace(/x₂/gi, 'ích hai')
-    .replace(/\bx\b/g, 'ích')
+    .replace(/(?<!\p{L})x(?!\p{L})/gu, 'ích')
     .replace(/m²/g, 'mờ bình phương')
     .replace(/\bm\s*\^\s*2\b/g, 'mờ bình phương')
-    .replace(/\bm\b/g, 'mờ')
-    .replace(/\bb\b/g, 'bê')
-    .replace(/\bc\b/g, 'xê')
+    .replace(/(?<!\p{L})m(?!\p{L})/gu, 'mờ')
+    .replace(/(?<!\p{L})b(?!\p{L})/gu, 'bê')
+    .replace(/(?<!\p{L})c(?!\p{L})/gu, 'xê')
     .replace(
       /(ích\s+(?:một|hai|ba|bốn|năm|sáu|bảy|tám|chín|\d+))\s+(?:bình|bình\s*phương?)(?!\s+phương)/gi,
       '$1 bình phương'
