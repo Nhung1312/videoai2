@@ -2,9 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  Download,
   FileCode,
   Play,
   RefreshCw,
+  Square,
   Upload,
   Volume2,
   X,
@@ -35,6 +37,9 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
   const activeSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const activeSessionRef = useRef('');
   const narrationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const captureStreamRef = useRef<MediaStream | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
 
   const [fileName, setFileName] = useState<string | null>(null);
   const [rawHtml, setRawHtml] = useState('');
@@ -45,6 +50,8 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
   const [runningHtml, setRunningHtml] = useState('');
   const [sessionId, setSessionId] = useState(makeSessionId());
   const [runKey, setRunKey] = useState(0);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingStatus, setRecordingStatus] = useState('');
 
   const lessonId = useMemo(() => (rawHtml ? stableHtmlLessonId(rawHtml) : ''), [rawHtml]);
 
@@ -97,6 +104,19 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
     });
   };
 
+  const stopHtmlRecording = () => {
+    const recorder = recorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stop();
+      return;
+    }
+
+    captureStreamRef.current?.getTracks().forEach((track) => track.stop());
+    captureStreamRef.current = null;
+    recorderRef.current = null;
+    setIsRecording(false);
+  };
+
   useEffect(() => {
     if (!isOpen) return;
 
@@ -105,11 +125,23 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       const data = event.data || {};
       if (
         data.source !== 'videoai2-html-lesson' ||
-        data.type !== 'narration-cue' ||
         data.sessionId !== activeSessionRef.current
       ) {
         return;
       }
+
+      if (data.type === 'lesson-complete') {
+        setStatus('Bài giảng HTML + Kore đã chạy xong.');
+        const recorder = recorderRef.current;
+        if (recorder && recorder.state === 'recording') {
+          window.setTimeout(() => {
+            if (recorder.state === 'recording') recorder.stop();
+          }, 900);
+        }
+        return;
+      }
+
+      if (data.type !== 'narration-cue') return;
 
       const messageSession = String(data.sessionId || '');
       const cueId = String(data.cueId || '');
@@ -165,10 +197,29 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
   useEffect(() => {
     return () => {
       stopActiveAudio();
+      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+        recorderRef.current.stop();
+      }
+      captureStreamRef.current?.getTracks().forEach((track) => track.stop());
+      captureStreamRef.current = null;
       audioContextRef.current?.close().catch(() => {});
       audioContextRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isRecording) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        const recorder = recorderRef.current;
+        if (recorder && recorder.state === 'recording') recorder.stop();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isRecording]);
 
   if (!isOpen) return null;
 
@@ -222,7 +273,11 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       }));
 
       setStatus(`Đang chuẩn bị Kore 0/${steps.length} đoạn...`);
-      const result = await AudioEngine.preloadLesson(steps, 'Kore');
+      const result = await AudioEngine.preloadLesson(
+        steps,
+        'Kore',
+        (ready, total) => setStatus(`Đang chuẩn bị Kore ${ready}/${total} đoạn...`)
+      );
 
       if (result.ready !== steps.length) {
         throw new Error(
@@ -264,13 +319,158 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
     setStatus('Đang chạy lại bài với giọng Kore đã cache...');
   };
 
+  const startHtmlRecording = async () => {
+    if (!runningHtml || !rawHtml || cues.length === 0 || !lessonId || isRecording) return;
+
+    if (!navigator.mediaDevices?.getDisplayMedia || typeof MediaRecorder === 'undefined') {
+      setError('Trình duyệt này chưa hỗ trợ ghi video trực tiếp. Hãy dùng Chrome/Cốc Cốc bản mới.');
+      return;
+    }
+
+    setError(null);
+    setRecordingStatus('Đang mở hộp chọn tab. Hãy chọn chính tab này và bật chia sẻ âm thanh.');
+
+    try {
+      await ensureAudioContext();
+
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 30 },
+        audio: true,
+      });
+
+      if (stream.getAudioTracks().length === 0) {
+        stream.getTracks().forEach((track) => track.stop());
+        throw new Error(
+          'Chưa có âm thanh trong bản ghi. Khi chọn tab, hãy bật “Chia sẻ âm thanh của tab”.'
+        );
+      }
+
+      captureStreamRef.current = stream;
+      recordingChunksRef.current = [];
+
+      const mimeCandidates = [
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm',
+      ];
+      const mimeType =
+        mimeCandidates.find((type) => MediaRecorder.isTypeSupported(type)) || '';
+
+      const recorder = new MediaRecorder(
+        stream,
+        mimeType
+          ? {
+              mimeType,
+              videoBitsPerSecond: 8_000_000,
+              audioBitsPerSecond: 192_000,
+            }
+          : {
+              videoBitsPerSecond: 8_000_000,
+              audioBitsPerSecond: 192_000,
+            }
+      );
+
+      recorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) recordingChunksRef.current.push(event.data);
+      };
+
+      recorder.onerror = () => {
+        setError('Có lỗi khi ghi video HTML + Kore.');
+      };
+
+      recorder.onstop = () => {
+        const chunks = recordingChunksRef.current;
+        recordingChunksRef.current = [];
+
+        captureStreamRef.current?.getTracks().forEach((track) => track.stop());
+        captureStreamRef.current = null;
+        recorderRef.current = null;
+        setIsRecording(false);
+
+        if (chunks.length === 0) {
+          setError('Không nhận được dữ liệu video để lưu.');
+          setRecordingStatus('');
+          return;
+        }
+
+        const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const baseName = (fileName || 'html-kore')
+          .replace(/\.html?$/i, '')
+          .replace(/[^a-zA-Z0-9_-]+/g, '-')
+          .replace(/^-+|-+$/g, '') || 'html-kore';
+
+        link.href = url;
+        link.download = `${baseName}-Kore.webm`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 3000);
+
+        setRecordingStatus('Đã xuất video WebM có tiếng Kore.');
+        setStatus('Xuất video HTML + Kore hoàn tất.');
+      };
+
+      const videoTrack = stream.getVideoTracks()[0];
+      videoTrack?.addEventListener('ended', () => {
+        if (recorder.state === 'recording') recorder.stop();
+      });
+
+      setIsRecording(true);
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      );
+
+      recorder.start(1000);
+      setRecordingStatus('Đang ghi video. Bài sẽ tự chạy lại từ đầu và tự lưu khi kết thúc.');
+
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+
+      stopActiveAudio();
+      const nextSession = makeSessionId();
+      activeSessionRef.current = nextSession;
+      narrationQueueRef.current = Promise.resolve();
+
+      setSessionId(nextSession);
+      setRunningHtml(injectHtmlNarrationBridge(rawHtml, nextSession, lessonId));
+      setRunKey((value) => value + 1);
+      setStatus('Đang ghi video HTML + Kore...');
+    } catch (err: any) {
+      captureStreamRef.current?.getTracks().forEach((track) => track.stop());
+      captureStreamRef.current = null;
+      recorderRef.current = null;
+      setIsRecording(false);
+      setRecordingStatus('');
+      setError(err?.message || 'Không bắt đầu được ghi video HTML + Kore.');
+    }
+  };
+
   const close = () => {
     activeSessionRef.current = '';
     narrationQueueRef.current = Promise.resolve();
     stopActiveAudio();
+    stopHtmlRecording();
     setRunningHtml('');
     onClose();
   };
+
+  if (isRecording) {
+    return (
+      <div className="fixed inset-0 z-[9999] bg-black">
+        <iframe
+          key={`recording-${runKey}-${sessionId}`}
+          ref={iframeRef}
+          title="HTML lesson recording"
+          srcDoc={runningHtml}
+          sandbox="allow-scripts"
+          className="w-screen h-screen border-0 bg-black"
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm p-3 md:p-5 flex items-center justify-center">
@@ -357,6 +557,26 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
               <Play className="w-3.5 h-3.5" />
               Chạy lại (dùng cache)
             </button>
+
+            <button
+              onClick={startHtmlRecording}
+              disabled={!runningHtml || isPreparing || isRecording}
+              className="w-full px-4 py-2.5 rounded-xl font-bold text-xs bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Download className="w-4 h-4" />
+              Xuất video HTML + Kore
+            </button>
+
+            {recordingStatus && (
+              <div className="p-3 rounded-xl border border-amber-500/20 bg-amber-950/20 text-[11px] leading-relaxed text-amber-200">
+                {recordingStatus}
+              </div>
+            )}
+
+            <div className="text-[11px] leading-relaxed text-slate-500">
+              Khi xuất video: chọn <strong className="text-slate-400">tab hiện tại</strong> và bật
+              <strong className="text-slate-400"> Chia sẻ âm thanh</strong>. Video WebM sẽ tự tải khi bài kết thúc.
+            </div>
 
             <div className="text-[11px] leading-relaxed text-slate-500 border-t border-slate-800 pt-3">
               Phần này không sửa Lesson Module, geometry engine hay nút Xuất video hiện tại.
