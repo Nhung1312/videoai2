@@ -9,7 +9,7 @@ import { ScriptEditorModal } from './components/ScriptEditorModal';
 import { ExportVideoModal } from './components/ExportVideoModal';
 import { SaveLessonModal } from './components/SaveLessonModal';
 import { LessonLibraryModal } from './components/LessonLibraryModal';
-import { ImportLessonModuleModal } from './components/ImportLessonModuleModal';
+import { ImportLessonModuleModal } from './components/ImportLessonModuleModal';\nimport { HtmlLessonPlayerModal } from './components/HtmlLessonPlayerModal';
 import { AudioEngine } from './lib/audioEngine';
 import { DraftStorage } from './lib/draftStorage';
 import { LessonStorage, SavedLessonEntry } from './lib/lessonStorage';
@@ -35,7 +35,7 @@ export default function App() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [isLibraryModalOpen, setIsLibraryModalOpen] = useState(false);
-  const [isImportModuleModalOpen, setIsImportModuleModalOpen] = useState(false);
+  const [isImportModuleModalOpen, setIsImportModuleModalOpen] = useState(false);\n  const [isHtmlLessonModalOpen, setIsHtmlLessonModalOpen] = useState(false);
   const [savedLessonsCount, setSavedLessonsCount] = useState<number>(() => {
     return LessonStorage.getAll().length;
   });
@@ -292,6 +292,15 @@ export default function App() {
             </button>
 
             <button
+              onClick={() => setIsHtmlLessonModalOpen(true)}
+              className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-500 text-white shadow-md shadow-violet-600/20 transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
+              title="Nhập HTML bài giảng có narrationScript + cue và phát bằng Kore"
+            >
+              <Volume2 className="w-3.5 h-3.5" />
+              <span>HTML + Kore</span>
+            </button>
+
+            <button
               onClick={() => setIsImportModuleModalOpen(true)}
               className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-600/20 transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
               title="Nhập Lesson Module với Canvas Renderer deterministic riêng"
@@ -498,6 +507,11 @@ export default function App() {
         onClose={() => setIsLibraryModalOpen(false)}
         onSelectLesson={handleSelectLessonFromLibrary}
         onOpenSaveCurrent={() => setIsSaveModalOpen(true)}
+      />
+
+      <HtmlLessonPlayerModal
+        isOpen={isHtmlLessonModalOpen}
+        onClose={() => setIsHtmlLessonModalOpen(false)}
       />
 
       <ImportLessonModuleModal
