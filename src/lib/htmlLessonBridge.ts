@@ -155,12 +155,12 @@ export const normalizeHtmlNarration = (text: string): string =>
     .replace(/x\s*[_₂]?2\b/gi, 'ích hai')
     .replace(/x₁/gi, 'ích một')
     .replace(/x₂/gi, 'ích hai')
-    .replace(/\bx\b/gi, 'ích')
+    .replace(/\bx\b/g, 'ích')
     .replace(/m²/g, 'mờ bình phương')
-    .replace(/\bm\s*\^\s*2\b/gi, 'mờ bình phương')
-    .replace(/\bm\b/gi, 'mờ')
-    .replace(/\bb\b/gi, 'bê')
-    .replace(/\bc\b/gi, 'xê')
+    .replace(/\bm\s*\^\s*2\b/g, 'mờ bình phương')
+    .replace(/\bm\b/g, 'mờ')
+    .replace(/\bb\b/g, 'bê')
+    .replace(/\bc\b/g, 'xê')
     .replace(
       /(ích\s+(?:một|hai|ba|bốn|năm|sáu|bảy|tám|chín|\d+))\s+(?:bình|bình\s*phương?)(?!\s+phương)/gi,
       '$1 bình phương'
@@ -225,6 +225,32 @@ export const injectHtmlNarrationBridge = (
       );
     });
   };
+
+  window.addEventListener('load', () => {
+    window.setTimeout(() => {
+      const originalStart = window.startAnimation;
+      if (typeof originalStart !== 'function' || originalStart.__videoai2Wrapped) return;
+
+      const wrappedStart = async function(...args) {
+        try {
+          return await originalStart.apply(this, args);
+        } finally {
+          window.parent.postMessage(
+            {
+              source: 'videoai2-html-lesson',
+              type: 'lesson-complete',
+              sessionId: SESSION_ID,
+              lessonId: LESSON_ID
+            },
+            '*'
+          );
+        }
+      };
+
+      wrappedStart.__videoai2Wrapped = true;
+      window.startAnimation = wrappedStart;
+    }, 0);
+  });
 })();
 <\/script>
 `;
