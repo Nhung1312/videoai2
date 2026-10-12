@@ -259,3 +259,41 @@ export const injectHtmlNarrationBridge = (
   }
   return html + bridge;
 };
+
+
+/**
+ * Recording-only layout override for portrait lesson HTML.
+ * Removes the original narrow 405px cap so the lesson fills a 9:16 capture frame.
+ */
+export const injectHtmlRecordingLayout = (html: string): string => {
+  const style = `
+<style data-videoai2-recording-layout>
+  html, body {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 100% !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    background: #000 !important;
+  }
+  body {
+    align-items: stretch !important;
+    justify-content: stretch !important;
+  }
+  .container {
+    width: 100% !important;
+    max-width: none !important;
+    height: 100% !important;
+    margin: 0 !important;
+    border-left: 0 !important;
+    border-right: 0 !important;
+    box-shadow: none !important;
+  }
+</style>
+`;
+
+  if (/<\/head>/i.test(html)) {
+    return html.replace(/<\/head>/i, `${style}</head>`);
+  }
+  return style + html;
+};
