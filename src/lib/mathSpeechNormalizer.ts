@@ -13,8 +13,6 @@ export function normalizeMathToVietnameseSpeech(latexOrText: string): string {
   speech = speech.replace(/\bPT\b/gi, 'phương trình');
   speech = speech.replace(/\bPB\b/gi, 'phân biệt');
   speech = speech.replace(/\bt\s*\/\s*m\b/gi, 'thỏa mãn');
-  speech = speech.replace(/(?:Δ|\\Delta)\s*['’′]/g, 'đen-ta phẩy');
-  speech = speech.replace(/(?:Δ|\\Delta)/g, 'đen-ta');
   speech = speech.replace(/\b(?:đen\s*ta|delta)\s*phẩy\b/gi, 'đen-ta phẩy');
   speech = speech.replace(/\b(?:đen\s*ta|delta)\b/gi, 'đen-ta');
   speech = speech.replace(/x\s*[_₁]?1\b/gi, 'ích một');
@@ -28,6 +26,9 @@ export function normalizeMathToVietnameseSpeech(latexOrText: string): string {
   speech = speech.replace(/\\Delta\s*([A-Z]{1,4})/g, 'tam giác $1');
   speech = speech.replace(/\\triangle\s*([A-Z]{1,4})/g, 'tam giác $1');
   speech = speech.replace(/[△▲]\s*([A-Z]{1,4})/g, 'tam giác $1');
+  // Any remaining Delta is the discriminant, not triangle notation.
+  speech = speech.replace(/(?:Δ|\\Delta)\s*['’′]/g, 'đen-ta phẩy');
+  speech = speech.replace(/(?:Δ|\\Delta)/g, 'đen-ta');
   speech = speech.replace(/\\widehat\{([A-Z]{1,4})\}/g, 'góc $1');
   speech = speech.replace(/\\angle\s*([A-Z]{1,4})/g, 'góc $1');
   speech = speech.replace(/∠\s*([A-Z]{1,4})/g, 'góc $1');
