@@ -113,14 +113,14 @@ export function normalizeMathToVietnameseSpeech(latexOrText: string): string {
   speech = speech.replace(/</g, ' nhỏ hơn ');
 
   // Isolated lowercase algebra variables/coefficients in Vietnamese math speech.
-  speech = speech.replace(/\bm\b/g, 'mờ');
-  speech = speech.replace(/\bx\b/g, 'ích');
-  speech = speech.replace(/\by\b/g, 'i');
-  speech = speech.replace(/\bb\b/g, 'bê');
-  speech = speech.replace(/\bc\b/g, 'xê');
-  speech = speech.replace(/\bd\b/g, 'đê');
-  speech = speech.replace(/\bn\b/g, 'en');
-  speech = speech.replace(/\bt\b/g, 'tê');
+  speech = speech.replace(/(?<!\p{L})m(?!\p{L})/gu, 'mờ');
+  speech = speech.replace(/(?<!\p{L})x(?!\p{L})/gu, 'ích');
+  speech = speech.replace(/(?<!\p{L})y(?!\p{L})/gu, 'i');
+  speech = speech.replace(/(?<!\p{L})b(?!\p{L})/gu, 'bê');
+  speech = speech.replace(/(?<!\p{L})c(?!\p{L})/gu, 'xê');
+  speech = speech.replace(/(?<!\p{L})d(?!\p{L})/gu, 'đê');
+  speech = speech.replace(/(?<!\p{L})n(?!\p{L})/gu, 'en');
+  speech = speech.replace(/(?<!\p{L})t(?!\p{L})/gu, 'tê');
 
   // Geometry point/segment names must be spoken as conventional Vietnamese
   // letter NAMES, not browser phonics ("hờ", "bờ", "cờ").
