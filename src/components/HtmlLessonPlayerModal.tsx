@@ -10,8 +10,8 @@ import {
   X,
 } from 'lucide-react';
 import { AudioEngine } from '../lib/audioEngine';
+import type { HtmlNarrationCue } from '../lib/htmlLessonBridge';
 import {
-  HtmlNarrationCue,
   injectHtmlNarrationBridge,
   normalizeHtmlNarration,
   stableHtmlLessonId,
@@ -71,10 +71,10 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
 
       const runCue = async () => {
         if (messageSession !== activeSessionRef.current) return;
+        let acknowledged = false;
 
         try {
           setStatus(`Kore đang đọc: ${narration}`);
-          let acknowledged = false;
           await AudioEngine.playNarrationCue(stepId, narration, 'Kore', () => {
             if (messageSession !== activeSessionRef.current) return;
             acknowledged = true;
@@ -96,7 +96,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
           if (messageSession !== activeSessionRef.current) return;
           const message = err?.message || 'Không phát được lời đọc Kore.';
           setError(message);
-          if (!(typeof acknowledged !== 'undefined' && acknowledged)) {
+          if (!acknowledged) {
             iframeRef.current?.contentWindow?.postMessage(
               {
                 source: 'videoai2-html-host',
