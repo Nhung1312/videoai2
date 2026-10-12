@@ -142,7 +142,9 @@ export const validateHtmlLesson = (html: string): HtmlLessonValidation => {
 
 export const normalizeHtmlNarration = (text: string): string =>
   text
-    .replace(/mờ/gi, 'em')
+    // Variable m in Vietnamese math narration is read "mờ".
+    // Do NOT convert "mờ" to the letter-name "em" (that is suitable for point M, not variable m).
+    .replace(/\bm\b/g, 'mờ')
     .replace(
       /(ích\s+(?:một|hai|ba|bốn|năm|sáu|bảy|tám|chín|\d+))\s+bình(?!\s+phương)/gi,
       '$1 bình phương'
