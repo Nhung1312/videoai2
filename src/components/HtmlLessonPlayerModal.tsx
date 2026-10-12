@@ -10,8 +10,8 @@ import {
   X,
 } from 'lucide-react';
 import { AudioEngine } from '../lib/audioEngine';
-import type { HtmlNarrationCue } from '../lib/htmlLessonBridge';
 import {
+  HtmlNarrationCue,
   injectHtmlNarrationBridge,
   normalizeHtmlNarration,
   stableHtmlLessonId,
@@ -31,6 +31,8 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
   onClose,
 }) => {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const activeSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const activeSessionRef = useRef('');
   const narrationQueueRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -45,6 +47,55 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
   const [runKey, setRunKey] = useState(0);
 
   const lessonId = useMemo(() => (rawHtml ? stableHtmlLessonId(rawHtml) : ''), [rawHtml]);
+
+  const stopActiveAudio = () => {
+    try {
+      activeSourceRef.current?.stop();
+    } catch {
+      // Already stopped.
+    }
+    activeSourceRef.current = null;
+  };
+
+  const ensureAudioContext = async () => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new AudioContext();
+    }
+    if (audioContextRef.current.state === 'suspended') {
+      await audioContextRef.current.resume();
+    }
+    return audioContextRef.current;
+  };
+
+  const playCachedCue = async (stepId: string, narration: string) => {
+    let cached = AudioEngine.getCachedAudio(stepId, narration, 'Kore');
+    if (!cached) {
+      cached = await AudioEngine.loadStepAudio(stepId, narration, 'Kore');
+    }
+    if (!cached) {
+      throw new Error(AudioEngine.getStepError(stepId) || 'Không lấy được giọng Kore cho đoạn này.');
+    }
+
+    const ctx = await ensureAudioContext();
+    const audioBuffer = await ctx.decodeAudioData(cached.arrayBuffer.slice(0));
+    const source = ctx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.playbackRate.value = AudioEngine.getPlaybackRateMultiplier();
+    source.connect(ctx.destination);
+    activeSourceRef.current = source;
+
+    await new Promise<void>((resolve, reject) => {
+      source.onended = () => {
+        if (activeSourceRef.current === source) activeSourceRef.current = null;
+        resolve();
+      };
+      try {
+        source.start();
+      } catch (err) {
+        reject(err);
+      }
+    });
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -71,43 +122,36 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
 
       const runCue = async () => {
         if (messageSession !== activeSessionRef.current) return;
-        let acknowledged = false;
 
         try {
           setStatus(`Kore đang đọc: ${narration}`);
-          await AudioEngine.playNarrationCue(stepId, narration, 'Kore', () => {
-            if (messageSession !== activeSessionRef.current) return;
-            acknowledged = true;
-            iframeRef.current?.contentWindow?.postMessage(
-              {
-                source: 'videoai2-html-host',
-                sessionId: messageSession,
-                requestId,
-                ok: true,
-              },
-              '*'
-            );
-            setStatus('Kore + animation đang chạy đồng bộ...');
-          });
+          await playCachedCue(stepId, narration);
 
           if (messageSession !== activeSessionRef.current) return;
+          iframeRef.current?.contentWindow?.postMessage(
+            {
+              source: 'videoai2-html-host',
+              sessionId: messageSession,
+              requestId,
+              ok: true,
+            },
+            '*'
+          );
           setStatus('Đang chạy bài giảng có tiếng Kore...');
         } catch (err: any) {
           if (messageSession !== activeSessionRef.current) return;
           const message = err?.message || 'Không phát được lời đọc Kore.';
           setError(message);
-          if (!acknowledged) {
-            iframeRef.current?.contentWindow?.postMessage(
-              {
-                source: 'videoai2-html-host',
-                sessionId: messageSession,
-                requestId,
-                ok: false,
-                error: message,
-              },
-              '*'
-            );
-          }
+          iframeRef.current?.contentWindow?.postMessage(
+            {
+              source: 'videoai2-html-host',
+              sessionId: messageSession,
+              requestId,
+              ok: false,
+              error: message,
+            },
+            '*'
+          );
         }
       };
 
@@ -118,12 +162,20 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
     return () => window.removeEventListener('message', handleMessage);
   }, [isOpen, cues, lessonId]);
 
+  useEffect(() => {
+    return () => {
+      stopActiveAudio();
+      audioContextRef.current?.close().catch(() => {});
+      audioContextRef.current = null;
+    };
+  }, []);
+
   if (!isOpen) return null;
 
   const resetRun = () => {
     activeSessionRef.current = '';
     narrationQueueRef.current = Promise.resolve();
-    AudioEngine.restart();
+    stopActiveAudio();
     setRunningHtml('');
     setStatus('');
     setError(null);
@@ -157,10 +209,12 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
 
     setIsPreparing(true);
     setError(null);
-    AudioEngine.restart();
-    AudioEngine.unlockPlayback();
+    stopActiveAudio();
 
     try {
+      // Resume while this action still originates from a user click.
+      await ensureAudioContext();
+
       const steps = cues.map((cue) => ({
         id: `${lessonId}:${cue.id}`,
         narration: normalizeHtmlNarration(cue.narration),
@@ -193,11 +247,11 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
     }
   };
 
-  const replay = () => {
+  const replay = async () => {
     if (!rawHtml || cues.length === 0 || !lessonId) return;
 
-    AudioEngine.restart();
-    AudioEngine.unlockPlayback();
+    stopActiveAudio();
+    await ensureAudioContext();
 
     const nextSession = makeSessionId();
     activeSessionRef.current = nextSession;
@@ -213,7 +267,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
   const close = () => {
     activeSessionRef.current = '';
     narrationQueueRef.current = Promise.resolve();
-    AudioEngine.restart();
+    stopActiveAudio();
     setRunningHtml('');
     onClose();
   };
