@@ -313,11 +313,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       exportUrl.hash = '';
       exportUrl.searchParams.set('html-kore-export', exportId);
 
-      const exportWindow = window.open(
-        exportUrl.toString(),
-        '_blank',
-        'popup=yes,width=520,height=920,resizable=yes,scrollbars=no'
-      );
+      const exportWindow = window.open(exportUrl.toString(), '_blank');
 
       if (!exportWindow) {
         localStorage.removeItem(storageKey);
@@ -327,7 +323,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       }
 
       setRecordingStatus(
-        'Đã mở cửa sổ xuất riêng. Sang cửa sổ đó, bấm “Bắt đầu xuất video 9:16” rồi chọn đúng tab xuất.'
+        'Đã mở tab xuất riêng. Sang tab đó, bấm “Bắt đầu xuất video 9:16” rồi chọn chính tab đó.'
       );
     } catch (err: any) {
       setRecordingStatus('');
