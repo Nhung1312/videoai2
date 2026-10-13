@@ -114,12 +114,6 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
 
       if (data.type === 'lesson-complete') {
         setStatus('Bài giảng HTML + Kore đã chạy xong.');
-        const recorder = recorderRef.current;
-        if (recorder && recorder.state === 'recording') {
-          window.setTimeout(() => {
-            if (recorder.state === 'recording') recorder.stop();
-          }, 900);
-        }
         return;
       }
 
