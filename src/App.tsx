@@ -37,9 +37,7 @@ export default function App() {
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [isLibraryModalOpen, setIsLibraryModalOpen] = useState(false);
   const [isImportModuleModalOpen, setIsImportModuleModalOpen] = useState(false);
-  const [isHtmlLessonModalOpen, setIsHtmlLessonModalOpen] = useState(
-    () => window.location.hash === '#html-kore-export'
-  );
+  const [isHtmlLessonModalOpen, setIsHtmlLessonModalOpen] = useState(false);
   const [savedLessonsCount, setSavedLessonsCount] = useState<number>(() => {
     return LessonStorage.getAll().length;
   });
