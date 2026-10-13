@@ -102,7 +102,7 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
   const playCachedCue = async (stepId: string, narration: string) => {
     let cached = AudioEngine.getCachedAudio(stepId, narration, 'Kore');
     if (!cached) {
-      cached = await AudioEngine.loadStepAudio(stepId, narration, 'Kore');
+      cached = await AudioEngine.loadStepAudio(stepId, narration, 'Kore', { allowApi: false });
     }
     if (!cached) {
       throw new Error(
@@ -188,7 +188,7 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
           const stepId = `${lessonId}:${cue.id}`;
 
           setStatus(`Đang nạp Kore từ cache ${i + 1}/${cues.length}...`);
-          const cached = await AudioEngine.loadStepAudio(stepId, narration, 'Kore');
+          const cached = await AudioEngine.loadStepAudio(stepId, narration, 'Kore', { allowApi: false });
           if (!cached) {
             throw new Error(
               AudioEngine.getStepError(stepId) ||
