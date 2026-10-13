@@ -248,7 +248,8 @@ class AudioEngineClass {
   public async loadStepAudio(
     stepId: string,
     narration: string,
-    voiceName = this.settings.voiceName
+    voiceName = this.settings.voiceName,
+    options?: { allowApi?: boolean }
   ): Promise<CachedAudioItem | null> {
     if (!narration || !narration.trim()) {
       return null;
@@ -303,6 +304,15 @@ class AudioEngineClass {
       }
     } catch (storageReadErr) {
       console.warn('Error reading stored audio from IndexedDB:', storageReadErr);
+    }
+
+    // Export windows may request cache-only playback so exporting never spends TTS quota.
+    if (options?.allowApi === false) {
+      const cacheMsg =
+        'Chưa tìm thấy Kore trong cache. Hãy quay lại bài giảng, bấm “Chuẩn bị Kore & Chạy”, rồi xuất lại.';
+      this.stepErrors.set(stepId, cacheMsg);
+      this.notifyStatus(stepId, 'error', cacheMsg);
+      return null;
     }
 
     // A quota/error state must never create or cache fake/silent narration.
