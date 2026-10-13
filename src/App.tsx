@@ -11,6 +11,7 @@ import { SaveLessonModal } from './components/SaveLessonModal';
 import { LessonLibraryModal } from './components/LessonLibraryModal';
 import { ImportLessonModuleModal } from './components/ImportLessonModuleModal';
 import { HtmlLessonPlayerModal } from './components/HtmlLessonPlayerModal';
+import { HtmlLessonExportWindow } from './components/HtmlLessonExportWindow';
 import { AudioEngine } from './lib/audioEngine';
 import { DraftStorage } from './lib/draftStorage';
 import { LessonStorage, SavedLessonEntry } from './lib/lessonStorage';
@@ -28,6 +29,16 @@ import {
 } from 'lucide-react';
 
 export default function App() {
+  const htmlExportId = new URLSearchParams(window.location.search).get('html-kore-export');
+
+  if (htmlExportId) {
+    return <HtmlLessonExportWindow exportId={htmlExportId} />;
+  }
+
+  return <MainApplication />;
+}
+
+function MainApplication() {
   const [currentLesson, setCurrentLesson] = useState<LessonScript>(SAMPLE_GEOMETRY_LESSON);
   const [currentLessonId, setCurrentLessonId] = useState<string | null>('sample-geometry-ahbk');
   const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16'>('16:9');
