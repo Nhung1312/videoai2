@@ -361,7 +361,10 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: 30 },
         audio: false,
-      });
+        preferCurrentTab: true,
+        selfBrowserSurface: 'include',
+        surfaceSwitching: 'exclude',
+      } as any);
       displayStreamRef.current = displayStream;
 
       const displayTrack = displayStream.getVideoTracks()[0];
