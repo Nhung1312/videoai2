@@ -366,19 +366,38 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       recordingChunksRef.current = [];
 
       const mimeCandidates = [
-        'video/mp4',
-        'video/webm;codecs=vp9,opus',
         'video/webm;codecs=vp8,opus',
+        'video/webm;codecs=vp9,opus',
         'video/webm',
       ];
-      const mimeType =
-        mimeCandidates.find((type) => MediaRecorder.isTypeSupported(type)) || 'video/webm';
 
-      const recorder = new MediaRecorder(combinedStream, {
-        mimeType,
-        videoBitsPerSecond: 6_000_000,
-        audioBitsPerSecond: 192_000,
-      });
+      let recorder: MediaRecorder | null = null;
+      let mimeType = '';
+
+      for (const candidate of mimeCandidates) {
+        if (!MediaRecorder.isTypeSupported(candidate)) continue;
+        try {
+          recorder = new MediaRecorder(combinedStream, {
+            mimeType: candidate,
+            videoBitsPerSecond: 5_000_000,
+            audioBitsPerSecond: 160_000,
+          });
+          mimeType = candidate;
+          break;
+        } catch {
+          // Try the next supported WebM profile.
+        }
+      }
+
+      if (!recorder) {
+        try {
+          recorder = new MediaRecorder(combinedStream);
+          mimeType = recorder.mimeType || 'video/webm';
+        } catch {
+          throw new Error('Trình duyệt không khởi tạo được bộ mã hóa video WebM.');
+        }
+      }
+
       recorderRef.current = recorder;
 
       recorder.ondataavailable = (event) => {
@@ -440,16 +459,81 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
         stopped = true;
       };
 
+      const copyComputedStyles = (source: Element, clone: Element) => {
+        if (source instanceof HTMLElement && clone instanceof HTMLElement) {
+          const computed = iframe.contentWindow?.getComputedStyle(source);
+          if (computed) {
+            for (const property of Array.from(computed)) {
+              try {
+                clone.style.setProperty(
+                  property,
+                  computed.getPropertyValue(property),
+                  computed.getPropertyPriority(property)
+                );
+              } catch {
+                // Ignore browser-only computed properties.
+              }
+            }
+
+            clone.style.setProperty('animation', 'none', 'important');
+            clone.style.setProperty('transition', 'none', 'important');
+            clone.style.setProperty('caret-color', 'transparent', 'important');
+          }
+        }
+
+        const sourceChildren = Array.from(source.children);
+        const cloneChildren = Array.from(clone.children);
+        for (let index = 0; index < Math.min(sourceChildren.length, cloneChildren.length); index++) {
+          copyComputedStyles(sourceChildren[index], cloneChildren[index]);
+        }
+      };
+
+      let successfulFrames = 0;
+
       const renderFrame = async () => {
         if (stopped) return;
 
+        let captureHost: HTMLDivElement | null = null;
         try {
           const target =
             (doc.querySelector('.container') as HTMLElement | null) || doc.body;
           const targetWidth = Math.max(1, target.clientWidth || 405);
           const targetHeight = Math.max(1, target.clientHeight || 720);
 
-          const snapshot = await html2canvas(target, {
+          const clone = target.cloneNode(true) as HTMLElement;
+          copyComputedStyles(target, clone);
+
+          clone.style.width = `${targetWidth}px`;
+          clone.style.height = `${targetHeight}px`;
+          clone.style.maxWidth = 'none';
+          clone.style.margin = '0';
+          clone.style.transform = 'none';
+
+          captureHost = document.createElement('div');
+          captureHost.setAttribute('data-videoai2-frame-clone', 'true');
+          Object.assign(captureHost.style, {
+            position: 'fixed',
+            left: '-20000px',
+            top: '0',
+            width: `${targetWidth}px`,
+            height: `${targetHeight}px`,
+            overflow: 'hidden',
+            background: '#000',
+            pointerEvents: 'none',
+            zIndex: '-1',
+          });
+
+          captureHost.appendChild(clone);
+          document.body.appendChild(captureHost);
+
+          const sourceBoard = target.querySelector('#board') as HTMLElement | null;
+          const cloneBoard = clone.querySelector('#board') as HTMLElement | null;
+          if (sourceBoard && cloneBoard) {
+            cloneBoard.scrollTop = sourceBoard.scrollTop;
+            cloneBoard.scrollLeft = sourceBoard.scrollLeft;
+          }
+
+          const snapshot = await html2canvas(clone, {
             backgroundColor: '#000000',
             logging: false,
             useCORS: true,
@@ -458,6 +542,8 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
             height: targetHeight,
             windowWidth: targetWidth,
             windowHeight: targetHeight,
+            scrollX: 0,
+            scrollY: 0,
           });
 
           outputCtx.fillStyle = '#000';
@@ -473,16 +559,39 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
             outputCanvas.width,
             outputCanvas.height
           );
-        } catch (captureError) {
+
+          successfulFrames++;
+          if (successfulFrames === 1) {
+            setRecordingStatus('Đang dựng video 9:16 có tiếng Kore...');
+          }
+        } catch (captureError: any) {
           console.warn('HTML frame capture warning:', captureError);
+          if (successfulFrames === 0) {
+            setRecordingStatus(
+              `Đang thử dựng khung hình... ${captureError?.message || 'chưa chụp được frame đầu'}`
+            );
+          }
+        } finally {
+          captureHost?.remove();
         }
 
         if (!stopped) {
-          window.setTimeout(renderFrame, 80);
+          window.setTimeout(renderFrame, 100);
         }
       };
 
       void renderFrame();
+
+      window.setTimeout(() => {
+        if (!stopped && successfulFrames === 0) {
+          setError(
+            'Không dựng được khung hình HTML để xuất video. App đã dừng xuất để tránh tạo file đen.'
+          );
+          stopFrameCaptureRef.current?.();
+          stopFrameCaptureRef.current = null;
+          if (recorder.state === 'recording') recorder.stop();
+        }
+      }, 5000);
     } catch (err: any) {
       stopFrameCaptureRef.current?.();
       stopFrameCaptureRef.current = null;
