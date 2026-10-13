@@ -309,7 +309,6 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       );
 
       const exportUrl = new URL(window.location.href);
-      exportUrl.search = '';
       exportUrl.hash = '';
       exportUrl.searchParams.set('html-kore-export', exportId);
 
