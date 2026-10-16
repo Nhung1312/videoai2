@@ -140,6 +140,7 @@ export const writeStandaloneHtmlExportShell = (
       <div class="tip">
         Khi trình duyệt hỏi chia sẻ, hãy chọn <b>chính tab “Xuất video HTML + Kore” này</b>.
         Không cần bật chia sẻ âm thanh; Kore được ghép trực tiếp vào file video.
+        Trong lúc xuất, hãy giữ tab này đang mở để animation chạy mượt.
       </div>
       <button id="start" disabled>Bắt đầu xuất video 9:16</button>
     </section>
@@ -172,7 +173,10 @@ export const writeStandaloneHtmlExportShell = (
     let outputStream = null;
     let sourceVideo = null;
     let outputCanvas = null;
-    let rafId = null;
+    let videoFrameCallbackId = null;
+    let frameHeartbeatTimer = null;
+    let manualCanvasTrack = null;
+    let frameTick = 0;
     let chunks = [];
     let narrationQueue = Promise.resolve();
     let lessonCompleted = false;
@@ -192,10 +196,15 @@ export const writeStandaloneHtmlExportShell = (
     };
 
     const cleanupCapture = () => {
-      if (rafId != null) {
-        cancelAnimationFrame(rafId);
-        rafId = null;
+      if (videoFrameCallbackId != null && sourceVideo?.cancelVideoFrameCallback) {
+        try { sourceVideo.cancelVideoFrameCallback(videoFrameCallbackId); } catch {}
+        videoFrameCallbackId = null;
       }
+      if (frameHeartbeatTimer != null) {
+        clearInterval(frameHeartbeatTimer);
+        frameHeartbeatTimer = null;
+      }
+      manualCanvasTrack = null;
       if (sourceVideo) {
         try { sourceVideo.pause(); } catch {}
         sourceVideo.srcObject = null;
@@ -313,8 +322,8 @@ export const writeStandaloneHtmlExportShell = (
       const ctx = outputCanvas.getContext('2d', { alpha: false });
       if (!ctx) throw new Error('Không khởi tạo được Canvas dựng video.');
 
-      const draw = () => {
-        if (!sourceVideo || !displayStream) return;
+      const drawFrame = () => {
+        if (!sourceVideo || !displayStream || !outputCanvas) return;
 
         if (sourceVideo.readyState >= 2 && sourceVideo.videoWidth > 0 && sourceVideo.videoHeight > 0) {
           const rect = frame.getBoundingClientRect();
@@ -333,12 +342,40 @@ export const writeStandaloneHtmlExportShell = (
             sx, sy, sw, sh,
             0, 0, outputCanvas.width, outputCanvas.height
           );
-        }
 
-        rafId = requestAnimationFrame(draw);
+          // Force a real canvas change even when the lesson is visually static.
+          // Without this, Chromium may stop emitting video frames while Kore keeps
+          // playing, producing a shorter video track than the audio track.
+          ctx.fillStyle = frameTick++ % 2 === 0 ? '#000000' : '#010101';
+          ctx.fillRect(outputCanvas.width - 1, outputCanvas.height - 1, 1, 1);
+
+          if (manualCanvasTrack?.requestFrame) {
+            try { manualCanvasTrack.requestFrame(); } catch {}
+          }
+        }
       };
 
-      draw();
+      const scheduleVideoFrame = () => {
+        if (!sourceVideo || !displayStream) return;
+        drawFrame();
+        if (sourceVideo.requestVideoFrameCallback) {
+          videoFrameCallbackId = sourceVideo.requestVideoFrameCallback(scheduleVideoFrame);
+        }
+      };
+
+      if (sourceVideo.requestVideoFrameCallback) {
+        videoFrameCallbackId = sourceVideo.requestVideoFrameCallback(scheduleVideoFrame);
+      } else {
+        frameHeartbeatTimer = setInterval(drawFrame, 1000 / 30);
+      }
+
+      // Heartbeat guarantees timestamps keep advancing even if the captured tab
+      // becomes visually static or the browser briefly throttles video callbacks.
+      if (frameHeartbeatTimer == null) {
+        frameHeartbeatTimer = setInterval(drawFrame, 250);
+      }
+
+      drawFrame();
     };
 
     startButton.addEventListener('click', async () => {
@@ -384,19 +421,23 @@ export const writeStandaloneHtmlExportShell = (
         setup.style.display = 'none';
         recordingView.classList.add('active');
 
-        await new Promise((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(resolve))
-        );
+        // Give the captured tab time to switch from the setup card to the clean
+        // 9:16 recording frame before MediaRecorder starts.
+        await new Promise((resolve) => setTimeout(resolve, 700));
 
         outputCanvas = document.createElement('canvas');
         outputCanvas.width = 720;
         outputCanvas.height = 1280;
-        const canvasStream = outputCanvas.captureStream(30);
+        const canvasStream = outputCanvas.captureStream(0);
+        manualCanvasTrack = canvasStream.getVideoTracks()[0] || null;
 
         outputStream = new MediaStream([
           ...canvasStream.getVideoTracks(),
           ...audioDestination.stream.getAudioTracks()
         ]);
+
+        startCropLoop();
+        await new Promise((resolve) => setTimeout(resolve, 300));
 
         const candidates = [
           'video/mp4',
@@ -455,10 +496,9 @@ export const writeStandaloneHtmlExportShell = (
         });
 
         recorder.start(500);
-        startCropLoop();
 
-        // Only start the HTML lesson after the recorder and crop loop are ready.
-        await new Promise((resolve) => setTimeout(resolve, 350));
+        // Only start the HTML lesson after the recorder already has clean 9:16 frames.
+        await new Promise((resolve) => setTimeout(resolve, 220));
         lesson.srcdoc = payload.runningHtml;
       } catch (err) {
         cleanupCapture();
