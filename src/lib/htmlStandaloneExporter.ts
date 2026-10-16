@@ -439,13 +439,20 @@ export const writeStandaloneHtmlExportShell = (
         startCropLoop();
         await new Promise((resolve) => setTimeout(resolve, 300));
 
+        // Do not use bare "video/mp4": Chromium may mux Opus audio into
+        // an MP4 container, which exists in the file but is silent in several
+        // Windows players/editors. Prefer an explicit AAC-in-MP4 profile; if the
+        // browser cannot record AAC, fall back to WebM/Opus instead of producing
+        // a misleading MP4 with incompatible audio.
         const candidates = [
-          'video/mp4',
+          'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+          'video/mp4;codecs=avc1,mp4a.40.2',
           'video/webm;codecs=vp9,opus',
           'video/webm;codecs=vp8,opus',
           'video/webm'
         ];
-        const mimeType = candidates.find((type) => MediaRecorder.isTypeSupported(type)) || 'video/webm';
+        const mimeType =
+          candidates.find((type) => MediaRecorder.isTypeSupported(type)) || 'video/webm';
 
         chunks = [];
         lessonCompleted = false;
