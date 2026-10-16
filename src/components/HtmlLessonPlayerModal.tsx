@@ -15,6 +15,7 @@ import { writeStandaloneHtmlExportShell } from '../lib/htmlStandaloneExporter';
 import {
   HtmlNarrationCue,
   injectHtmlNarrationBridge,
+  injectHtmlRecordingLayout,
   normalizeHtmlNarration,
   stableHtmlLessonId,
   validateHtmlLesson,
@@ -338,7 +339,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       }
 
       const runningExportHtml = injectHtmlNarrationBridge(
-        rawHtml,
+        injectHtmlRecordingLayout(rawHtml),
         exportSessionId,
         lessonId
       );
