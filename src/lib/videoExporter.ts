@@ -408,7 +408,7 @@ export class VideoExporter {
             isPortrait: false,
           });
           ctx.restore();
-        } else {
+        } else if (lesson.geometryScene) {
           drawGeometryOnCanvas(
             ctx,
             lesson.geometryScene,
@@ -455,7 +455,7 @@ export class VideoExporter {
             isPortrait: true,
           });
           ctx.restore();
-        } else {
+        } else if (lesson.geometryScene) {
           drawGeometryOnCanvas(
             ctx,
             lesson.geometryScene,
