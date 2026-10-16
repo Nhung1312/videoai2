@@ -11,9 +11,11 @@ import {
   X,
 } from 'lucide-react';
 import { AudioEngine } from '../lib/audioEngine';
+import { writeStandaloneHtmlExportShell } from '../lib/htmlStandaloneExporter';
 import {
   HtmlNarrationCue,
   injectHtmlNarrationBridge,
+  injectHtmlRecordingLayout,
   normalizeHtmlNarration,
   stableHtmlLessonId,
   validateHtmlLesson,
@@ -278,55 +280,123 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
     setStatus('Đang chạy lại bài với giọng Kore đã cache...');
   };
 
-  const startHtmlRecording = () => {
+  const startHtmlRecording = async () => {
     if (!rawHtml || cues.length === 0 || !lessonId || isPreparing) return;
 
     setError(null);
+    setRecordingStatus('');
 
-    const missingCue = cues.find((cue) => {
-      const narration = normalizeHtmlNarration(cue.narration);
-      return !AudioEngine.hasCachedAudio(`${lessonId}:${cue.id}`, narration, 'Kore');
-    });
-
-    if (missingCue) {
-      setError('Hãy bấm “Chuẩn bị Kore & Chạy” ít nhất một lần trước khi xuất video.');
+    // Open about:blank directly from the user's click. This avoids AI Studio's
+    // applet-auth-bridge, which returns 403 when an app preview URL is opened
+    // as a normal top-level tab.
+    const exportWindow = window.open('about:blank', '_blank');
+    if (!exportWindow) {
+      setError(
+        'Trình duyệt đang chặn tab mới. Hãy cho phép pop-up cho trang này rồi bấm Xuất video lại.'
+      );
       return;
     }
 
     const exportId = `export-${Date.now().toString(36)}-${Math.random()
       .toString(36)
       .slice(2, 8)}`;
-    const storageKey = `videoai2-html-export:${exportId}`;
 
     try {
-      localStorage.setItem(
-        storageKey,
-        JSON.stringify({
-          rawHtml,
-          fileName,
-          createdAt: Date.now(),
-        })
-      );
+      writeStandaloneHtmlExportShell(exportWindow, exportId);
 
-      const exportUrl = new URL(window.location.href);
-      exportUrl.hash = '';
-      exportUrl.searchParams.set('html-kore-export', exportId);
+      const exportSessionId = makeSessionId();
+      const preparedCues: Array<{
+        id: string;
+        narration: string;
+        audio: ArrayBuffer;
+      }> = [];
 
-      const exportWindow = window.open(exportUrl.toString(), '_blank');
+      setRecordingStatus('Đang chuyển Kore đã cache sang tab xuất...');
 
-      if (!exportWindow) {
-        localStorage.removeItem(storageKey);
-        throw new Error(
-          'Trình duyệt đang chặn cửa sổ mới. Hãy cho phép pop-up cho trang này rồi bấm Xuất video lại.'
-        );
+      for (const cue of cues) {
+        const narration = normalizeHtmlNarration(cue.narration);
+        const stepId = `${lessonId}:${cue.id}`;
+
+        let cached = AudioEngine.getCachedAudio(stepId, narration, 'Kore');
+        if (!cached) {
+          cached = await AudioEngine.loadStepAudio(stepId, narration, 'Kore', {
+            allowApi: false,
+          });
+        }
+
+        if (!cached) {
+          throw new Error(
+            AudioEngine.getStepError(stepId) ||
+              'Thiếu Kore đã cache. Hãy bấm “Chuẩn bị Kore & Chạy” rồi xuất lại.'
+          );
+        }
+
+        preparedCues.push({
+          id: cue.id,
+          narration,
+          audio: cached.arrayBuffer.slice(0),
+        });
       }
 
+      const runningExportHtml = injectHtmlNarrationBridge(
+        injectHtmlRecordingLayout(rawHtml),
+        exportSessionId,
+        lessonId
+      );
+
+      // Send the lesson + cached Kore directly to the about:blank tab.
+      // No navigation to aistudio.google.com is involved, so no auth bridge.
+      exportWindow.postMessage(
+        {
+          source: 'videoai2-standalone-export-init',
+          exportId,
+          payload: {
+            sessionId: exportSessionId,
+            runningHtml: runningExportHtml,
+            fileName: fileName || 'html-kore.html',
+            playbackRate: AudioEngine.getPlaybackRateMultiplier(),
+            cues: preparedCues,
+          },
+        },
+        '*'
+      );
+
+      // Send once more shortly after document initialization in case the first
+      // message arrived before the export shell registered its listener.
+      window.setTimeout(() => {
+        try {
+          if (!exportWindow.closed) {
+            exportWindow.postMessage(
+              {
+                source: 'videoai2-standalone-export-init',
+                exportId,
+                payload: {
+                  sessionId: exportSessionId,
+                  runningHtml: runningExportHtml,
+                  fileName: fileName || 'html-kore.html',
+                  playbackRate: AudioEngine.getPlaybackRateMultiplier(),
+                  cues: preparedCues,
+                },
+              },
+              '*'
+            );
+          }
+        } catch {
+          // The export tab may already be recording or closed.
+        }
+      }, 350);
+
       setRecordingStatus(
-        'Đã mở tab xuất riêng. Sang tab đó, bấm “Bắt đầu xuất video 9:16” rồi chọn chính tab đó.'
+        'Đã mở tab xuất riêng. Sang tab “Xuất video HTML + Kore”, bấm “Bắt đầu xuất video 9:16” rồi chọn chính tab đó.'
       );
     } catch (err: any) {
+      try {
+        exportWindow.close();
+      } catch {
+        // Ignore close failures.
+      }
       setRecordingStatus('');
-      setError(err?.message || 'Không mở được cửa sổ xuất video.');
+      setError(err?.message || 'Không chuẩn bị được tab xuất video.');
     }
   };
 
