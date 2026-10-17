@@ -28,6 +28,18 @@ test('validate codec, geometry, frame count, starts and duration drift', () => {
   const noAudio = probe(); noAudio.streams.pop();
   assert.throws(() => validateProbe(noAudio, { sizeBytes: 1000 }), /track/);
 });
+test('raw input startup gaps must fit before the gate; final MP4 remains strict', () => {
+  const raw = probe();
+  Object.assign(raw.streams[1], { codec_name: 'pcm_s16le', start_time: '0.491', tags: { DURATION: '00:00:12.020000000' } });
+  delete raw.streams[1].duration;
+  assert.throws(() => validateProbe(raw, { sizeBytes: 1000, final: false }), /mốc bắt đầu/);
+  const result = validateProbe(raw, { sizeBytes: 1000, final: false, maximumStartOffsetSec: 0.8, minimumDuration: 11 });
+  assert.ok(Math.abs(result.audioDuration - 11.529) < 0.001);
+  assert.ok(result.endDifference < 0.25);
+  assert.ok(result.durationDifference > 0.25);
+  const final = probe(); final.streams[1].start_time = '0.491';
+  assert.throws(() => validateProbe(final, { sizeBytes: 1000 }), /mốc bắt đầu/);
+});
 test('three synthetic exports cannot unlock real Kore UI integration', () => {
   const report = { state: 'completed', input: { cueCount: 18, htmlSha256: 'x', playbackRate: 1, source: { kind: 'synthetic-diagnostic' } }, validation: { videoDuration: 12 } };
   assert.equal(evaluateBenchmark([report, report, report]).passed, false);

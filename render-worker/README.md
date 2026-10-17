@@ -39,6 +39,11 @@ phải kiểm chứng chuyển động và hình/tiếng ở đầu, giữa, cu�
 Hai input cùng phiên dùng wallclock timestamp và `-isync 0` với copyts/start_at_zero
 để giữ chênh mốc mở input; không mặc nhiên có latency bằng
 0: cần đo độ lệch của capture/display/audio buffer bằng video chẩn đoán.
+File MKV trung gian có thể thiếu audio ở phần lead trước khi mở bài do input
+PulseAudio khởi tạo sau input X11. Chỉ chấp nhận gap nằm trước start gate và
+hai track kết thúc gần nhau; normalize giữ PTS và thêm silence đầu bằng
+`aresample=async=1:first_pts=0`. MP4 cuối vẫn phải đạt đủ kiểm tra mốc bắt đầu,
+thời lượng và ngưỡng 0.25 giây, không nới ngưỡng đầu ra.
 
 ## Package nhị phân
 

@@ -44,6 +44,7 @@ export async function renderPackage(packageDirectory, outputDirectory, options =
     await runner.page.evaluate(key => window[key].recordingReady(), BRIDGE_KEY);
     await delay(options.cleanLeadMs ?? 350);
     update('rendering');
+    const captureLeadSeconds = (Date.now() - capture.startedAt) / 1000;
     await runner.page.evaluate(key => window[key].start(), BRIDGE_KEY);
     const renderDeadline = Date.now() + (options.renderTimeoutMs ?? 900000);
     let lastFrame = capture.progress.frame;
@@ -70,7 +71,8 @@ export async function renderPackage(packageDirectory, outputDirectory, options =
     const first = snapshot.events.find(e => e.type === 'gate-release');
     const last = snapshot.events.find(e => e.type === 'lesson-complete');
     const minimumDuration = (last.atMs - first.atMs) / 1000 - 0.1;
-    report.rawValidation = await validateVideo(raw, { ...options, final: false, minimumDuration });
+    report.capture.leadBeforeGateSeconds = captureLeadSeconds;
+    report.rawValidation = await validateVideo(raw, { ...options, final: false, minimumDuration, maximumStartOffsetSec: captureLeadSeconds });
     checkSignal();
     update('encoding');
     const pending = path.join(jobDirectory, 'output.pending.mp4');
