@@ -163,6 +163,9 @@ export const writeStandaloneHtmlExportShell = (
     const recordingView = document.getElementById('recording');
     const frame = document.getElementById('frame');
     const lesson = document.getElementById('lesson');
+    const TARGET_FPS = 24;
+    const TARGET_VIDEO_BITRATE = 4500000;
+    const TARGET_AUDIO_BITRATE = 192000;
 
     let payload = null;
     let decoded = new Map();
@@ -177,6 +180,9 @@ export const writeStandaloneHtmlExportShell = (
     let frameHeartbeatTimer = null;
     let manualCanvasTrack = null;
     let frameTick = 0;
+    let regionCaptureActive = false;
+    let playedCueCount = 0;
+    let audibleCueCount = 0;
     let chunks = [];
     let narrationQueue = Promise.resolve();
     let lessonCompleted = false;
@@ -205,6 +211,7 @@ export const writeStandaloneHtmlExportShell = (
         frameHeartbeatTimer = null;
       }
       manualCanvasTrack = null;
+      regionCaptureActive = false;
       if (sourceVideo) {
         try { sourceVideo.pause(); } catch {}
         sourceVideo.srcObject = null;
@@ -244,9 +251,25 @@ export const writeStandaloneHtmlExportShell = (
       source.connect(audioContext.destination);
       source.connect(audioDestination);
 
+      // Cheap signal check: make sure the cached Kore clip actually contains
+      // non-silent PCM before we declare the final file successful.
+      const channel = buffer.getChannelData(0);
+      const stride = Math.max(1, Math.floor(channel.length / 1200));
+      let peak = 0;
+      for (let i = 0; i < channel.length; i += stride) {
+        peak = Math.max(peak, Math.abs(channel[i]));
+        if (peak > 0.002) break;
+      }
+
       await new Promise((resolve, reject) => {
         source.onended = resolve;
-        try { source.start(); } catch (err) { reject(err); }
+        try {
+          source.start();
+          playedCueCount++;
+          if (peak > 0.002) audibleCueCount++;
+        } catch (err) {
+          reject(err);
+        }
       });
     };
 
@@ -326,22 +349,35 @@ export const writeStandaloneHtmlExportShell = (
         if (!sourceVideo || !displayStream || !outputCanvas) return;
 
         if (sourceVideo.readyState >= 2 && sourceVideo.videoWidth > 0 && sourceVideo.videoHeight > 0) {
-          const rect = frame.getBoundingClientRect();
-          const scaleX = sourceVideo.videoWidth / Math.max(1, window.innerWidth);
-          const scaleY = sourceVideo.videoHeight / Math.max(1, window.innerHeight);
-
-          const sx = Math.max(0, rect.left * scaleX);
-          const sy = Math.max(0, rect.top * scaleY);
-          const sw = Math.max(1, Math.min(sourceVideo.videoWidth - sx, rect.width * scaleX));
-          const sh = Math.max(1, Math.min(sourceVideo.videoHeight - sy, rect.height * scaleY));
-
           ctx.fillStyle = '#000';
           ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
-          ctx.drawImage(
-            sourceVideo,
-            sx, sy, sw, sh,
-            0, 0, outputCanvas.width, outputCanvas.height
-          );
+
+          if (regionCaptureActive) {
+            // Region Capture has already reduced the source to the 9:16 lesson
+            // frame. Canvas now only performs the cheap final scale to exactly
+            // 720×1280; it no longer has to crop the whole browser tab.
+            ctx.drawImage(
+              sourceVideo,
+              0, 0, sourceVideo.videoWidth, sourceVideo.videoHeight,
+              0, 0, outputCanvas.width, outputCanvas.height
+            );
+          } else {
+            // Compatibility fallback for browsers without Region Capture.
+            const rect = frame.getBoundingClientRect();
+            const scaleX = sourceVideo.videoWidth / Math.max(1, window.innerWidth);
+            const scaleY = sourceVideo.videoHeight / Math.max(1, window.innerHeight);
+
+            const sx = Math.max(0, rect.left * scaleX);
+            const sy = Math.max(0, rect.top * scaleY);
+            const sw = Math.max(1, Math.min(sourceVideo.videoWidth - sx, rect.width * scaleX));
+            const sh = Math.max(1, Math.min(sourceVideo.videoHeight - sy, rect.height * scaleY));
+
+            ctx.drawImage(
+              sourceVideo,
+              sx, sy, sw, sh,
+              0, 0, outputCanvas.width, outputCanvas.height
+            );
+          }
 
           // Force a real canvas change even when the lesson is visually static.
           // Without this, Chromium may stop emitting video frames while Kore keeps
@@ -366,7 +402,7 @@ export const writeStandaloneHtmlExportShell = (
       if (sourceVideo.requestVideoFrameCallback) {
         videoFrameCallbackId = sourceVideo.requestVideoFrameCallback(scheduleVideoFrame);
       } else {
-        frameHeartbeatTimer = setInterval(drawFrame, 1000 / 30);
+        frameHeartbeatTimer = setInterval(drawFrame, 1000 / TARGET_FPS);
       }
 
       // Heartbeat guarantees timestamps keep advancing even if the captured tab
@@ -376,6 +412,40 @@ export const writeStandaloneHtmlExportShell = (
       }
 
       drawFrame();
+    };
+
+    const tryEnableRegionCapture = async (displayTrack) => {
+      const CropTargetApi = window.CropTarget;
+      if (!CropTargetApi?.fromElement || typeof displayTrack?.cropTo !== 'function') {
+        return false;
+      }
+
+      try {
+        const cropTarget = await CropTargetApi.fromElement(frame);
+        await displayTrack.cropTo(cropTarget);
+
+        // Ask Chromium to cap capture work at 24 fps. Width/height are only
+        // ideals here because the visible crop can be smaller than 720×1280;
+        // the lightweight final Canvas scale guarantees the file is exactly
+        // 720×1280 regardless of screen size.
+        try {
+          await displayTrack.applyConstraints({
+            frameRate: { ideal: TARGET_FPS, max: TARGET_FPS },
+            width: { ideal: 720 },
+            height: { ideal: 1280 }
+          });
+        } catch {
+          // Constraints are an optimization only; cropTo itself is enough.
+        }
+
+        return true;
+      } catch (err) {
+        console.warn('Region Capture unavailable; using Canvas crop fallback:', err);
+        try {
+          if (typeof displayTrack?.cropTo === 'function') await displayTrack.cropTo(null);
+        } catch {}
+        return false;
+      }
     };
 
     startButton.addEventListener('click', async () => {
@@ -390,7 +460,7 @@ export const writeStandaloneHtmlExportShell = (
 
         setStatus('Hãy chọn chính tab xuất video này trong hộp chia sẻ...');
         displayStream = await navigator.mediaDevices.getDisplayMedia({
-          video: { frameRate: 30 },
+          video: { frameRate: TARGET_FPS },
           audio: false,
           preferCurrentTab: true,
           selfBrowserSurface: 'include',
@@ -405,6 +475,22 @@ export const writeStandaloneHtmlExportShell = (
           throw new Error('Bạn vừa chọn cửa sổ/màn hình. Hãy bấm lại và chọn đúng tab xuất video này.');
         }
 
+        audioDestination = audioContext.createMediaStreamDestination();
+
+        setup.style.display = 'none';
+        recordingView.classList.add('active');
+
+        // Give the captured tab time to switch from the setup card to the clean
+        // 9:16 recording frame before asking Region Capture for this element.
+        await new Promise((resolve) => setTimeout(resolve, 650));
+
+        regionCaptureActive = await tryEnableRegionCapture(displayTrack);
+        setStatus(
+          regionCaptureActive
+            ? 'Đang xuất 9:16 bằng Region Capture + Kore...'
+            : 'Trình duyệt chưa hỗ trợ Region Capture. Đang dùng chế độ tương thích + Kore...'
+        );
+
         sourceVideo = document.createElement('video');
         sourceVideo.muted = true;
         sourceVideo.playsInline = true;
@@ -416,15 +502,6 @@ export const writeStandaloneHtmlExportShell = (
         });
         await sourceVideo.play();
 
-        audioDestination = audioContext.createMediaStreamDestination();
-
-        setup.style.display = 'none';
-        recordingView.classList.add('active');
-
-        // Give the captured tab time to switch from the setup card to the clean
-        // 9:16 recording frame before MediaRecorder starts.
-        await new Promise((resolve) => setTimeout(resolve, 700));
-
         outputCanvas = document.createElement('canvas');
         outputCanvas.width = 720;
         outputCanvas.height = 1280;
@@ -435,6 +512,14 @@ export const writeStandaloneHtmlExportShell = (
           ...canvasStream.getVideoTracks(),
           ...audioDestination.stream.getAudioTracks()
         ]);
+
+        const outputVideoTracks = outputStream.getVideoTracks();
+        const outputAudioTracks = outputStream.getAudioTracks();
+        if (outputVideoTracks.length !== 1 || outputAudioTracks.length !== 1) {
+          throw new Error(
+            'Không tạo đủ luồng hình và tiếng. Đã dừng xuất để tránh tạo file lỗi.'
+          );
+        }
 
         startCropLoop();
         await new Promise((resolve) => setTimeout(resolve, 300));
@@ -456,10 +541,12 @@ export const writeStandaloneHtmlExportShell = (
 
         chunks = [];
         lessonCompleted = false;
+        playedCueCount = 0;
+        audibleCueCount = 0;
         recorder = new MediaRecorder(outputStream, {
           mimeType,
-          videoBitsPerSecond: 6000000,
-          audioBitsPerSecond: 192000
+          videoBitsPerSecond: TARGET_VIDEO_BITRATE,
+          audioBitsPerSecond: TARGET_AUDIO_BITRATE
         });
 
         recorder.ondataavailable = (event) => {
@@ -469,10 +556,21 @@ export const writeStandaloneHtmlExportShell = (
         recorder.onerror = () => showError('Có lỗi khi mã hóa video.');
 
         recorder.onstop = () => {
+          const hadVideoTrack = Boolean(outputStream?.getVideoTracks().length);
+          const hadAudioTrack = Boolean(outputStream?.getAudioTracks().length);
+          const hadAudibleKore = playedCueCount > 0 && audibleCueCount > 0;
+
           cleanupCapture();
 
           if (chunks.length === 0) {
             showError('Không nhận được dữ liệu video để lưu.');
+            return;
+          }
+
+          if (!hadVideoTrack || !hadAudioTrack || !hadAudibleKore) {
+            showError(
+              'Bản xuất chưa đủ cả hình và tiếng Kore nên app không tải file lỗi. Hãy xuất lại.'
+            );
             return;
           }
 
@@ -493,7 +591,7 @@ export const writeStandaloneHtmlExportShell = (
           startButton.disabled = false;
           setStatus(
             lessonCompleted
-              ? 'Đã xuất video ' + ext.toUpperCase() + ' 720×1280 có tiếng Kore.'
+              ? 'Đã xuất video ' + ext.toUpperCase() + ' 720×1280 đủ hình + tiếng Kore.'
               : 'Đã lưu video nhưng quá trình ghi bị dừng sớm.'
           );
         };
