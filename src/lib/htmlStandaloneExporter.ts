@@ -183,6 +183,8 @@ export const writeStandaloneHtmlExportShell = (
     let regionCaptureActive = false;
     let playedCueCount = 0;
     let audibleCueCount = 0;
+    let recordingReady = false;
+    let captureEndedEarly = false;
     let chunks = [];
     let narrationQueue = Promise.resolve();
     let lessonCompleted = false;
@@ -210,6 +212,7 @@ export const writeStandaloneHtmlExportShell = (
         clearInterval(frameHeartbeatTimer);
         frameHeartbeatTimer = null;
       }
+      recordingReady = false;
       manualCanvasTrack = null;
       regionCaptureActive = false;
       if (sourceVideo) {
@@ -241,8 +244,23 @@ export const writeStandaloneHtmlExportShell = (
     const playCue = async (cueId) => {
       const buffer = decoded.get(cueId);
       if (!buffer) throw new Error('Thiếu Kore đã cache cho cue: ' + cueId);
-      if (!audioContext || !audioDestination) {
-        throw new Error('Bộ ghép âm thanh chưa sẵn sàng.');
+      // A narration cue must never race the recorder setup. This can happen
+      // on Chromium forks (notably Cốc Cốc) just after the share picker closes.
+      const waitStartedAt = Date.now();
+      while ((!recordingReady || !audioDestination) && Date.now() - waitStartedAt < 5000) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      if (!audioContext || !audioDestination || !recordingReady) {
+        throw new Error(
+          captureEndedEarly
+            ? 'Luồng quay tab đã dừng trước khi Kore bắt đầu. Hãy chọn đúng tab xuất video và giữ tab đó mở.'
+            : 'Bộ ghép âm thanh chưa sẵn sàng. Hãy bấm xuất lại.'
+        );
+      }
+
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
       }
 
       const source = audioContext.createBufferSource();
@@ -415,6 +433,14 @@ export const writeStandaloneHtmlExportShell = (
     };
 
     const tryEnableRegionCapture = async (displayTrack) => {
+      // Cốc Cốc exposes parts of Chromium's Region Capture API but its self-tab
+      // capture can end/restart the track during cropTo(), which races the Kore
+      // mixer. Use the stable Canvas-crop path there; Chrome/Edge can still use
+      // Region Capture normally.
+      const ua = navigator.userAgent || '';
+      const isCocCoc = /coc_coc|coccoc|coc coc/i.test(ua);
+      if (isCocCoc) return false;
+
       const CropTargetApi = window.CropTarget;
       if (!CropTargetApi?.fromElement || typeof displayTrack?.cropTo !== 'function') {
         return false;
@@ -454,6 +480,10 @@ export const writeStandaloneHtmlExportShell = (
       startButton.disabled = true;
 
       try {
+        recordingReady = false;
+        captureEndedEarly = false;
+        lesson.srcdoc = '';
+
         audioContext = audioContext || new AudioContext();
         if (audioContext.state === 'suspended') await audioContext.resume();
         await decodeAllAudio();
@@ -556,6 +586,9 @@ export const writeStandaloneHtmlExportShell = (
         recorder.onerror = () => showError('Có lỗi khi mã hóa video.');
 
         recorder.onstop = () => {
+          recordingReady = false;
+          lesson.srcdoc = '';
+
           const hadVideoTrack = Boolean(outputStream?.getVideoTracks().length);
           const hadAudioTrack = Boolean(outputStream?.getAudioTracks().length);
           const hadAudibleKore = playedCueCount > 0 && audibleCueCount > 0;
@@ -564,6 +597,13 @@ export const writeStandaloneHtmlExportShell = (
 
           if (chunks.length === 0) {
             showError('Không nhận được dữ liệu video để lưu.');
+            return;
+          }
+
+          if (captureEndedEarly) {
+            showError(
+              'Luồng quay tab đã bị dừng giữa chừng. Hãy chọn đúng tab “Xuất video HTML + Kore” và giữ tab đó mở đến khi tải file.'
+            );
             return;
           }
 
@@ -597,13 +637,25 @@ export const writeStandaloneHtmlExportShell = (
         };
 
         displayTrack?.addEventListener('ended', () => {
-          if (recorder && recorder.state === 'recording') recorder.stop();
+          captureEndedEarly = !lessonCompleted;
+          recordingReady = false;
+
+          if (recorder && recorder.state === 'recording') {
+            recorder.stop();
+          }
         });
 
         recorder.start(500);
+        await new Promise((resolve) => setTimeout(resolve, 120));
 
-        // Only start the HTML lesson after the recorder already has clean 9:16 frames.
-        await new Promise((resolve) => setTimeout(resolve, 220));
+        if (recorder.state !== 'recording' || !audioDestination) {
+          throw new Error('Bộ ghi chưa khởi động ổn định. Hãy bấm xuất lại.');
+        }
+
+        recordingReady = true;
+
+        // Only start the HTML lesson after BOTH video and Kore mixer are ready.
+        await new Promise((resolve) => setTimeout(resolve, 180));
         lesson.srcdoc = payload.runningHtml;
       } catch (err) {
         cleanupCapture();
