@@ -36,13 +36,14 @@ export async function openRunner(pkg, runtime, options = {}) {
       if (request.method() !== 'GET') { rejected.push({ url, kind: 'method' }); return route.abort('blockedbyclient'); }
       if (url === ORIGIN + '/') return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
       const file = pkg.files.get(url);
-      if (file) return route.fulfill({ status: 200, contentType: file.contentType, body: file.bytes });
+      if (file) return route.fulfill({ status: 200, contentType: file.contentType, headers: { 'access-control-allow-origin': ORIGIN, 'cross-origin-resource-policy': 'cross-origin' }, body: file.bytes });
       // No continue(), fetch(), local file server, metadata, CDN or TTS route.
       // Every asset must be in the package before offline rendering starts.
       rejected.push({ url, kind: 'resource' });
       return route.abort('blockedbyclient');
     });
     const page = await context.newPage();
+    await page.bringToFront();
     page.on('download', download => { void download.cancel(); });
     const pageErrors = [];
     page.on('pageerror', error => pageErrors.push(error.message));
@@ -52,15 +53,15 @@ export async function openRunner(pkg, runtime, options = {}) {
       const { windowId } = await session.send('Browser.getWindowForTarget');
       await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'fullscreen' } });
       await session.detach();
+      await page.bringToFront();
     }
     await page.evaluate(key => window[key].prepare(), BRIDGE_KEY);
     if (rejected.length || pageErrors.length) throw new RenderError('render-error', 'HTML thiếu tài nguyên đã đóng gói hoặc có lỗi JavaScript.', { rejected, pageErrors });
-    // One preflight screenshot flushes Chromium's pending compositor paint
-    // after fullscreen/viewport changes. It is discarded; video is exclusively
-    // recorded by X11/PulseAudio, never by screenshotting DOM frames.
-    await page.screenshot({ type: 'png', timeout: 10000 });
+    // Wait for foreground compositor paint after fullscreen/viewport changes.
+    // Headed Page.captureScreenshot is not a reliable readiness primitive;
+    // video remains exclusively X11/PulseAudio, with no DOM screenshot loop.
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    await new Promise(resolve => setTimeout(resolve, 250));
+    await new Promise(resolve => setTimeout(resolve, options.compositorWarmupMs ?? 750));
     return { browser, page, rejected, pageErrors, snapshot: () => page.evaluate(key => window[key].snapshot(), BRIDGE_KEY) };
   } catch (error) { await browser.close(); throw error; }
   finally { clearTimeout(preparationTimer); }

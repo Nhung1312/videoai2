@@ -54,3 +54,17 @@ test('damaged audio fails preparation instead of generating a replacement', { ti
   pkg.files.get(pkg.cues[0].url).bytes = Buffer.from('broken wav');
   await assert.rejects(openRunner(pkg, { env: mediaEnvironment() }, { chromiumPath: process.env.CHROMIUM_BIN, headless: true, allowUnsandboxed: process.env.RENDER_TRUSTED_DIAGNOSTIC === '1' }), /decode|audio|Unable|Encoding|giải mã/i);
 });
+
+test('packaged cross-origin module assets load offline with CORS headers', { timeout: 15000 }, async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'runner-assets-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  await diagnosticPackage(dir, { count: 1 });
+  const pkg = await loadPackage(dir);
+  const url = 'https://cdn.jsdelivr.net/diagnostic-module.mjs';
+  pkg.html = pkg.html.replace('</head>', `<script type="module" src="${url}"></script></head>`);
+  pkg.files.set(url, { contentType: 'text/javascript', bytes: Buffer.from('window.__offlineModuleLoaded = true;') });
+  const runner = await openRunner(pkg, { env: mediaEnvironment() }, { chromiumPath: process.env.CHROMIUM_BIN, headless: true, allowUnsandboxed: process.env.RENDER_TRUSTED_DIAGNOSTIC === '1' });
+  t.after(() => runner.browser.close());
+  assert.equal(await runner.page.evaluate(() => window.__offlineModuleLoaded), true);
+  assert.deepEqual(runner.rejected, []);
+});
