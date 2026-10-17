@@ -26,6 +26,27 @@ export const buildOfflineKoreHtml = (
 
   const bridge = `
 <style data-videoai2-offline-kore-ui>
+  html, body {
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    background: #000 !important;
+    overflow: hidden !important;
+  }
+  body {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+  .container {
+    width: min(100vw, 56.25vh) !important;
+    height: min(100vh, 177.7778vw) !important;
+    aspect-ratio: 9 / 16 !important;
+    max-width: none !important;
+    margin: 0 auto !important;
+    overflow: hidden !important;
+  }
+
   #videoai2-kore-start {
     position: fixed !important;
     inset: 0 !important;
