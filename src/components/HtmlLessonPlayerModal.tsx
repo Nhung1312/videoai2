@@ -11,7 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import { AudioEngine } from '../lib/audioEngine';
-import { writeStandaloneHtmlExportShell } from '../lib/htmlStandaloneExporter';
+import { buildOfflineKoreHtml } from '../lib/htmlOfflineKoreExporter';
 import {
   HtmlNarrationCue,
   injectHtmlNarrationBridge,
@@ -284,38 +284,34 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
     if (!rawHtml || cues.length === 0 || !lessonId || isPreparing) return;
 
     setError(null);
-    setRecordingStatus('');
+    setRecordingStatus('Đang đóng gói HTML + Kore...');
 
-    // Open about:blank directly from the user's click. This avoids AI Studio's
-    // applet-auth-bridge, which returns 403 when an app preview URL is opened
-    // as a normal top-level tab.
-    const exportWindow = window.open('about:blank', '_blank');
-    if (!exportWindow) {
-      setError(
-        'Trình duyệt đang chặn tab mới. Hãy cho phép pop-up cho trang này rồi bấm Xuất video lại.'
-      );
-      return;
-    }
+    const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      const chunkSize = 0x8000;
 
-    const exportId = `export-${Date.now().toString(36)}-${Math.random()
-      .toString(36)
-      .slice(2, 8)}`;
+      for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+        const chunk = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length));
+        binary += String.fromCharCode(...chunk);
+      }
+
+      return btoa(binary);
+    };
 
     try {
-      writeStandaloneHtmlExportShell(exportWindow, exportId);
-
-      const exportSessionId = makeSessionId();
-      const preparedCues: Array<{
+      const embeddedCues: Array<{
         id: string;
-        narration: string;
-        audio: ArrayBuffer;
+        mimeType: string;
+        audioBase64: string;
       }> = [];
 
-      setRecordingStatus('Đang chuyển Kore đã cache sang tab xuất...');
-
-      for (const cue of cues) {
+      for (let i = 0; i < cues.length; i++) {
+        const cue = cues[i];
         const narration = normalizeHtmlNarration(cue.narration);
         const stepId = `${lessonId}:${cue.id}`;
+
+        setRecordingStatus(`Đang đóng gói Kore ${i + 1}/${cues.length}...`);
 
         let cached = AudioEngine.getCachedAudio(stepId, narration, 'Kore');
         if (!cached) {
@@ -327,76 +323,49 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
         if (!cached) {
           throw new Error(
             AudioEngine.getStepError(stepId) ||
-              'Thiếu Kore đã cache. Hãy bấm “Chuẩn bị Kore & Chạy” rồi xuất lại.'
+              'Thiếu Kore đã cache. Hãy bấm “Chuẩn bị Kore & Chạy” rồi tải HTML lại.'
           );
         }
 
-        preparedCues.push({
+        embeddedCues.push({
           id: cue.id,
-          narration,
-          audio: cached.arrayBuffer.slice(0),
+          mimeType: cached.blob?.type || 'audio/wav',
+          audioBase64: arrayBufferToBase64(cached.arrayBuffer.slice(0)),
         });
       }
 
-      const runningExportHtml = injectHtmlNarrationBridge(
+      const htmlWithKore = buildOfflineKoreHtml(
         injectHtmlRecordingLayout(rawHtml),
-        exportSessionId,
-        lessonId
+        embeddedCues,
+        AudioEngine.getPlaybackRateMultiplier()
       );
 
-      // Send the lesson + cached Kore directly to the about:blank tab.
-      // No navigation to aistudio.google.com is involved, so no auth bridge.
-      exportWindow.postMessage(
-        {
-          source: 'videoai2-standalone-export-init',
-          exportId,
-          payload: {
-            sessionId: exportSessionId,
-            runningHtml: runningExportHtml,
-            fileName: fileName || 'html-kore.html',
-            playbackRate: AudioEngine.getPlaybackRateMultiplier(),
-            cues: preparedCues,
-          },
-        },
-        '*'
-      );
+      const blob = new Blob([htmlWithKore], {
+        type: 'text/html;charset=utf-8',
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
 
-      // Send once more shortly after document initialization in case the first
-      // message arrived before the export shell registered its listener.
-      window.setTimeout(() => {
-        try {
-          if (!exportWindow.closed) {
-            exportWindow.postMessage(
-              {
-                source: 'videoai2-standalone-export-init',
-                exportId,
-                payload: {
-                  sessionId: exportSessionId,
-                  runningHtml: runningExportHtml,
-                  fileName: fileName || 'html-kore.html',
-                  playbackRate: AudioEngine.getPlaybackRateMultiplier(),
-                  cues: preparedCues,
-                },
-              },
-              '*'
-            );
-          }
-        } catch {
-          // The export tab may already be recording or closed.
-        }
-      }, 350);
+      const baseName =
+        (fileName || 'bai-giang')
+          .replace(/\.html?$/i, '')
+          .replace(/[^a-zA-Z0-9_-]+/g, '-')
+          .replace(/^-+|-+$/g, '') || 'bai-giang';
+
+      link.href = url;
+      link.download = `${baseName}-Kore-QUAY-THU-CONG.html`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      window.setTimeout(() => URL.revokeObjectURL(url), 5000);
 
       setRecordingStatus(
-        'Đã mở tab xuất riêng. Sang tab “Xuất video HTML + Kore”, bấm “Bắt đầu xuất video 9:16” rồi chọn chính tab đó.'
+        'Đã tải HTML có sẵn tiếng Kore. Mở file đó → bật quay màn hình của bạn → bấm “Bắt đầu bài giảng có tiếng”. Không còn dùng bộ xuất video tự động.'
       );
     } catch (err: any) {
-      try {
-        exportWindow.close();
-      } catch {
-        // Ignore close failures.
-      }
       setRecordingStatus('');
-      setError(err?.message || 'Không chuẩn bị được tab xuất video.');
+      setError(err?.message || 'Không đóng gói được HTML + Kore.');
     }
   };
 
@@ -500,7 +469,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
               className="w-full px-4 py-2.5 rounded-xl font-bold text-xs bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white flex items-center justify-center gap-2 cursor-pointer"
             >
               <Download className="w-4 h-4" />
-              Xuất video HTML + Kore
+              Tải HTML + Kore để quay thủ công
             </button>
 
             {recordingStatus && (
@@ -510,7 +479,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
             )}
 
             <div className="text-[11px] leading-relaxed text-slate-500">
-              Xuất video mở ở cửa sổ riêng để tránh giới hạn iframe của AI Studio. Cửa sổ xuất sẽ ghi animation thật, cắt đúng 9:16 và ghép Kore riêng.
+              HTML tải về đã nhúng sẵn toàn bộ tiếng Kore và chạy đồng bộ theo cue. Bạn mở file, tự bật quay màn hình rồi bấm bắt đầu bài giảng.
             </div>
 
             <div className="text-[11px] leading-relaxed text-slate-500 border-t border-slate-800 pt-3">
