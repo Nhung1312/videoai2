@@ -36,7 +36,8 @@ FINISHING → COMPLETE; lỗi đi vào ERROR, không phát hoàn thành giả.
 **CFR không chứng minh không đứng hình.** FFmpeg có thể lặp frame khi nguồn
 chậm. Báo cáo có số drop/duplicate và khoảng gián đoạn rAF; nghiệm thu vẫn
 phải kiểm chứng chuyển động và hình/tiếng ở đầu, giữa, cuối video thực tế.
-Hai input cùng phiên dùng wallclock timestamp, không mặc nhiên có latency bằng
+Hai input cùng phiên dùng wallclock timestamp và `-isync 0` với copyts/start_at_zero
+để giữ chênh mốc mở input; không mặc nhiên có latency bằng
 0: cần đo độ lệch của capture/display/audio buffer bằng video chẩn đoán.
 
 ## Package nhị phân

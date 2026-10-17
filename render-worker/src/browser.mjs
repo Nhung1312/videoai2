@@ -55,6 +55,12 @@ export async function openRunner(pkg, runtime, options = {}) {
     }
     await page.evaluate(key => window[key].prepare(), BRIDGE_KEY);
     if (rejected.length || pageErrors.length) throw new RenderError('render-error', 'HTML thiếu tài nguyên đã đóng gói hoặc có lỗi JavaScript.', { rejected, pageErrors });
+    // One preflight screenshot flushes Chromium's pending compositor paint
+    // after fullscreen/viewport changes. It is discarded; video is exclusively
+    // recorded by X11/PulseAudio, never by screenshotting DOM frames.
+    await page.screenshot({ type: 'png', timeout: 10000 });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await new Promise(resolve => setTimeout(resolve, 250));
     return { browser, page, rejected, pageErrors, snapshot: () => page.evaluate(key => window[key].snapshot(), BRIDGE_KEY) };
   } catch (error) { await browser.close(); throw error; }
   finally { clearTimeout(preparationTimer); }

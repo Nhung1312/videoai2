@@ -12,6 +12,7 @@ test('one FFmpeg invocation captures Xvfb and PulseAudio with wallclock timestam
   const args = captureArgs({ display: ':99.0', sink: 'videoai2.monitor', output: 'capture.mkv' });
   assert.equal(args.filter(x => x === '-i').length, 2);
   assert.equal(args.filter(x => x === '-use_wallclock_as_timestamps').length, 2);
+  assert.ok(args.includes('-copyts') && args.includes('-start_at_zero') && args.includes('-isync'));
   assert.ok(args.includes('x11grab') && args.includes('pulse'));
   assert.ok(!args.includes('-shortest'));
   assert.ok(!normalizeArgs('a.mkv', 'a.mp4').includes('-shortest'));

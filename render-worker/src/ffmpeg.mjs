@@ -2,10 +2,10 @@ import { startProcess, runProcess, stopProcess, waitUntil } from './process.mjs'
 import { RenderError } from './errors.mjs';
 
 export function captureArgs({ display, sink, output }) {
-  return ['-hide_banner', '-y', '-loglevel', 'warning', '-stats_period', '0.1', '-progress', 'pipe:3',
-    '-thread_queue_size', '512', '-use_wallclock_as_timestamps', '1', '-f', 'x11grab', '-draw_mouse', '0', '-framerate', '30', '-video_size', '720x1280', '-i', `${display}+0,0`,
-    '-thread_queue_size', '1024', '-use_wallclock_as_timestamps', '1', '-f', 'pulse', '-sample_rate', '48000', '-channels', '2', '-i', sink,
-    '-map', '0:v:0', '-map', '1:a:0', '-vf', 'fps=30,format=yuv420p', '-fps_mode', 'cfr',
+  return ['-hide_banner', '-y', '-loglevel', 'warning', '-stats_period', '0.1', '-progress', 'pipe:3', '-copyts', '-start_at_zero',
+    '-thread_queue_size', '512', '-probesize', '32', '-analyzeduration', '0', '-use_wallclock_as_timestamps', '1', '-f', 'x11grab', '-draw_mouse', '0', '-framerate', '30', '-video_size', '720x1280', '-i', `${display}+0,0`,
+    '-thread_queue_size', '1024', '-probesize', '32', '-analyzeduration', '0', '-isync', '0', '-use_wallclock_as_timestamps', '1', '-f', 'pulse', '-sample_rate', '48000', '-channels', '2', '-i', sink,
+    '-map', '0:v:0', '-map', '1:a:0', '-vf', 'fps=30,format=yuv420p,setsar=1', '-fps_mode', 'cfr',
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-threads', '2',
     '-c:a', 'pcm_s16le', output];
 }
@@ -13,7 +13,7 @@ export function normalizeArgs(input, output) {
   // Preserve the captured relationship between inputs. Never concat cue WAVs,
   // independently reset both PTS, use -shortest, or truncate the final clip.
   return ['-hide_banner', '-y', '-loglevel', 'warning', '-i', input,
-    '-map', '0:v:0', '-map', '0:a:0', '-vf', 'fps=30,format=yuv420p', '-fps_mode', 'cfr',
+    '-map', '0:v:0', '-map', '0:a:0', '-vf', 'fps=30,format=yuv420p,setsar=1', '-fps_mode', 'cfr',
     '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-profile:v', 'high', '-level:v', '4.0', '-threads', '2',
     '-c:a', 'aac', '-profile:a', 'aac_low', '-b:a', '160k', '-ar', '48000',
     '-af', 'aresample=async=1:first_pts=0', '-video_track_timescale', '90000', '-movflags', '+faststart', output];
