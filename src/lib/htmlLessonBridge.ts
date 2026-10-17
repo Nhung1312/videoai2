@@ -289,7 +289,92 @@ export const injectHtmlRecordingLayout = (html: string): string => {
     border-right: 0 !important;
     box-shadow: none !important;
   }
+
+  /* Controls are useful in Preview but must never cover lesson text in export. */
+  .replay-btn,
+  [data-videoai2-no-record] {
+    display: none !important;
+  }
+
+  /* Remove the fading mask that visually cuts the first/last lines while the
+     lesson auto-scrolls. Keep a small safe area around the scrolling board. */
+  .board {
+    -webkit-mask-image: none !important;
+    mask-image: none !important;
+    padding-bottom: 24px !important;
+    scroll-padding-top: 12px !important;
+    scroll-padding-bottom: 18px !important;
+  }
+  #scroll-content {
+    padding-bottom: 18px !important;
+  }
+  .step-box {
+    scroll-margin-top: 12px !important;
+    scroll-margin-bottom: 18px !important;
+  }
+  .final-ans {
+    margin-bottom: 14px !important;
+  }
 </style>
+<script data-videoai2-recording-scroll-fix>
+(() => {
+  const install = () => {
+    const fitAndScroll = () => {
+      const board = document.getElementById('board');
+      if (!board) return;
+
+      const visibleSteps = Array.from(board.querySelectorAll('.step-box')).filter((el) => {
+        const st = getComputedStyle(el);
+        return st.display !== 'none' && st.visibility !== 'hidden' && !el.classList.contains('collapse');
+      });
+      const active = visibleSteps[visibleSteps.length - 1];
+      if (!active) return;
+
+      // If the active step becomes taller than the board, shrink only that
+      // current step slightly so both its title and final line remain visible.
+      active.style.zoom = '';
+      const safeHeight = Math.max(1, board.clientHeight - 24);
+      const activeHeight = active.scrollHeight;
+      if (activeHeight > safeHeight) {
+        const zoom = Math.max(0.82, Math.min(1, safeHeight / activeHeight));
+        active.style.zoom = String(zoom);
+      }
+
+      const top = Math.max(0, active.offsetTop - 10);
+      const maxTop = Math.max(0, board.scrollHeight - board.clientHeight);
+      board.scrollTop = Math.min(top, maxTop);
+    };
+
+    // Replace generic "scroll to absolute bottom" behavior during recording.
+    // The lesson's typewriter calls autoScroll repeatedly, so this keeps the
+    // active step fully readable instead of clipping its heading/top line.
+    try {
+      window.autoScroll = fitAndScroll;
+    } catch {}
+
+    const observer = new MutationObserver(() => {
+      requestAnimationFrame(fitAndScroll);
+    });
+    const board = document.getElementById('board');
+    if (board) {
+      observer.observe(board, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ['class', 'style']
+      });
+      requestAnimationFrame(fitAndScroll);
+    }
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', install, { once: true });
+  } else {
+    install();
+  }
+})();
+<\/script>
 `;
 
   if (/<\/head>/i.test(html)) {
