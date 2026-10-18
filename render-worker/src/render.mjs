@@ -5,7 +5,7 @@ import { loadPackage } from './package.mjs';
 import { createRuntime, acquireWorkerLock } from './runtime.mjs';
 import { openRunner } from './browser.mjs';
 import { BRIDGE_KEY } from './transform.mjs';
-import { startCapture, normalizeVideo } from './ffmpeg.mjs';
+import { startCapture, normalizeVideo, verifyCapturedSilentTail } from './ffmpeg.mjs';
 import { validateVideo } from './validate.mjs';
 import { delay, stopProcess } from './process.mjs';
 import { RenderError, assertRender } from './errors.mjs';
@@ -71,12 +71,18 @@ export async function renderPackage(packageDirectory, outputDirectory, options =
     const first = snapshot.events.find(e => e.type === 'gate-release');
     const last = snapshot.events.find(e => e.type === 'lesson-complete');
     const minimumDuration = (last.atMs - first.atMs) / 1000 - 0.1;
+    const lastCueEnded = snapshot.events.filter(e => e.type === 'cue-end').at(-1);
+    // The sink may stop delivering silent packets while the final picture is
+    // held. A gap is allowed only inside the measured post-source tail, with
+    // 150 ms margin, and the captured audio must actually end in silence.
+    const maximumSilentTailGapSec = lastCueEnded ? Math.max(0, Math.min(1, (last.atMs - lastCueEnded.atMs) / 1000) - 0.15) : 0;
     report.capture.leadBeforeGateSeconds = captureLeadSeconds;
-    report.rawValidation = await validateVideo(raw, { ...options, final: false, minimumDuration, maximumStartOffsetSec: captureLeadSeconds });
+    report.rawValidation = await validateVideo(raw, { ...options, final: false, minimumDuration, maximumStartOffsetSec: captureLeadSeconds, maximumSilentTailGapSec });
+    if (report.rawValidation.requiresTrailingSilencePadding) report.silentTail = await verifyCapturedSilentTail(raw, report.rawValidation.audioEnd, runtime, options);
     checkSignal();
     update('encoding');
     const pending = path.join(jobDirectory, 'output.pending.mp4');
-    await normalizeVideo(raw, pending, runtime, options);
+    await normalizeVideo(raw, pending, runtime, { ...options, padAudioToSec: report.rawValidation.videoEnd });
     checkSignal();
     update('validating');
     report.validation = await validateVideo(pending, { ...options, minimumDuration });
