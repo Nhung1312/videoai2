@@ -2,7 +2,7 @@ name: Private real Kore acceptance
 on:
   push:
     branches: [codex/real-kore-acceptance]
-    paths: ['.github/workflows/real-kore-acceptance.yml', 'render-worker/src/**', 'render-worker/scripts/private-fixture.mjs', 'render-worker/Dockerfile']
+    paths: ['.github/workflows/real-kore-acceptance.yml', 'render-worker/src/**', 'render-worker/scripts/**', 'render-worker/tests/**', 'render-worker/Dockerfile']
   workflow_dispatch:
 permissions:
   contents: read
@@ -38,6 +38,7 @@ jobs:
         working-directory: render-worker
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
+          npm test
           node scripts/import-offline.mjs "$RUNNER_TEMP/kore-private/lesson.html" "$RUNNER_TEMP/kore-private/package"
           node scripts/collect-assets.mjs "$RUNNER_TEMP/kore-private/package"
           chmod -R a+rX "$RUNNER_TEMP/kore-private/package"

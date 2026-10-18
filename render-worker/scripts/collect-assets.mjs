@@ -8,6 +8,35 @@ import { sha256 } from '../src/package.mjs';
 import { assertRender } from '../src/errors.mjs';
 
 const HOSTS = new Set(['cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com']);
+export function cssUrls(css) {
+  const urls = [];
+  for (const match of css.matchAll(/url\(\s*(?:(["'])(.*?)\1|([^\s)]+))\s*\)/g)) urls.push(match[2] ?? match[3]);
+  for (const match of css.matchAll(/@import\s+(["'])(.*?)\1/g)) urls.push(match[2]);
+  return urls.filter(url => !/^(?:data:|blob:|#)/i.test(url));
+}
+export function inspectAssetUrls(html) {
+  const urls = new Set();
+  const visit = node => {
+    const attrs = Object.fromEntries((node.attrs || []).map(a => [a.name, a.value]));
+    const value = node.nodeName === 'link' ? attrs.href : attrs.src;
+    if (value && /^https:\/\//.test(value)) urls.add(value);
+    const css = node.nodeName === 'style' ? (node.childNodes || []).map(n => n.value || '').join('') : attrs.style || '';
+    for (const url of cssUrls(css)) if (/^https:\/\//.test(url)) urls.add(url);
+    for (const child of node.childNodes || []) visit(child);
+  };
+  visit(parse(html));
+  // MathJax's combined tex-svg bundle loads optional TeX extensions lazily.
+  // Stage explicit require packages and the color commands used in lessons;
+  // never permit the offline renderer to fetch them itself.
+  const packages = new Set([...html.matchAll(/\\require\{([a-zA-Z0-9_-]+)\}/g)].map(m => m[1]));
+  if (/\\(?:color|textcolor|definecolor|colorbox|fcolorbox)\b/.test(html)) packages.add('color');
+  for (const url of [...urls]) {
+    if (!/\/mathjax\/[^/]+\/es5\/(?:tex|tex-mml)-(?:svg|chtml)(?:-full)?\.js(?:\?.*)?$/.test(url)) continue;
+    const base = new URL('./', url);
+    for (const name of packages) urls.add(new URL(`input/tex/extensions/${name}.js`, base).href);
+  }
+  return urls;
+}
 export function isPublicAddress(address) {
   // Asset staging intentionally accepts IPv4 only. No IPv6/mapped-address or
   // alternate numeric-host parsing can bypass the private-address checks.
@@ -42,14 +71,7 @@ export async function collectAssets(directory) {
   const manifestFile = path.join(directory, 'manifest.json');
   const manifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
   const html = await fs.readFile(path.join(directory, manifest.lesson || 'lesson.html'), 'utf8');
-  const urls = new Set();
-  const visit = node => {
-    const attrs = Object.fromEntries((node.attrs || []).map(a => [a.name, a.value]));
-    const value = node.nodeName === 'link' ? attrs.href : attrs.src;
-    if (value && /^https:\/\//.test(value)) urls.add(value);
-    for (const child of node.childNodes || []) visit(child);
-  };
-  visit(parse(html));
+  const urls = inspectAssetUrls(html);
   const existing = new Set((manifest.assets || []).map(a => a.url));
   await fs.mkdir(path.join(directory, 'assets'), { recursive: true });
   for (const url of urls) {
@@ -62,9 +84,7 @@ export async function collectAssets(directory) {
     existing.add(url);
     if (/text\/css/.test(asset.contentType)) {
       const css = asset.bytes.toString('utf8');
-      for (const match of css.matchAll(/(?:url\(\s*|@import\s+)["']?([^\s"')]+)["']?\s*\)?/g)) {
-        if (!match[1].startsWith('data:')) urls.add(new URL(match[1], asset.finalUrl).href);
-      }
+      for (const value of cssUrls(css)) urls.add(new URL(value, asset.finalUrl).href);
     }
     assertRender(urls.size <= 250, 'package-error', 'Quá nhiều tài nguyên trong package.');
   }
