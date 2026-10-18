@@ -8,6 +8,17 @@ import { sha256 } from '../src/package.mjs';
 import { assertRender } from '../src/errors.mjs';
 
 const HOSTS = new Set(['cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com']);
+// MathJax 3.2.2 default autoload command map (upstream AutoloadConfiguration).
+const TEX_EXTENSIONS = {
+  action: ['toggle', 'mathtip', 'texttip'], bbox: ['bbox'], boldsymbol: ['boldsymbol'],
+  braket: ['bra', 'ket', 'braket', 'set', 'Bra', 'Ket', 'Braket', 'Set', 'ketbra', 'Ketbra'],
+  cancel: ['cancel', 'bcancel', 'xcancel', 'cancelto'],
+  color: ['color', 'definecolor', 'textcolor', 'colorbox', 'fcolorbox'], enclose: ['enclose'],
+  extpfeil: ['xtwoheadrightarrow', 'xtwoheadleftarrow', 'xmapsto', 'xlongequal', 'xtofrom', 'Newextarrow'],
+  html: ['href', 'class', 'style', 'cssId'], mhchem: ['ce', 'pu'],
+  newcommand: ['newcommand', 'renewcommand', 'newenvironment', 'renewenvironment', 'def', 'let'],
+  unicode: ['unicode'], verb: ['verb'],
+};
 export function cssUrls(css) {
   const urls = [];
   for (const match of css.matchAll(/url\(\s*(?:(["'])(.*?)\1|([^\s)]+))\s*\)/g)) urls.push(match[2] ?? match[3]);
@@ -26,10 +37,13 @@ export function inspectAssetUrls(html) {
   };
   visit(parse(html));
   // MathJax's combined tex-svg bundle loads optional TeX extensions lazily.
-  // Stage explicit require packages and the color commands used in lessons;
+  // Stage explicit require packages and the default autoload commands;
   // never permit the offline renderer to fetch them itself.
   const packages = new Set([...html.matchAll(/\\require\{([a-zA-Z0-9_-]+)\}/g)].map(m => m[1]));
-  if (/\\(?:color|textcolor|definecolor|colorbox|fcolorbox)\b/.test(html)) packages.add('color');
+  const commands = new Set([...html.matchAll(/\\([A-Za-z]+)/g)].map(m => m[1]));
+  for (const [name, macros] of Object.entries(TEX_EXTENSIONS)) if (macros.some(m => commands.has(m))) packages.add(name);
+  if (/\\begin\{CD\}/.test(html)) packages.add('amscd');
+  if (/\\begin\{prooftree\}/.test(html)) packages.add('bussproofs');
   for (const url of [...urls]) {
     if (!/\/mathjax\/[^/]+\/es5\/(?:tex|tex-mml)-(?:svg|chtml)(?:-full)?\.js(?:\?.*)?$/.test(url)) continue;
     const base = new URL('./', url);

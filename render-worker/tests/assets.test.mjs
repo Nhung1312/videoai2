@@ -10,8 +10,9 @@ test('stage inline font imports with semicolons and nested CSS URLs', () => {
 });
 test('stage MathJax color and explicit require extensions before offline render', () => {
   const base = 'https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/';
-  const html = `<script src="${base}tex-svg.js"></script><div>\\color{red}{x} \\require{bbox}</div>`;
+  const html = `<script src="${base}tex-svg.js"></script><div>\\color{red}{x} \\bbox[yellow]{x} \\require{cancel}</div>`;
   const urls = inspectAssetUrls(html);
   assert.ok(urls.has(base + 'input/tex/extensions/color.js'));
   assert.ok(urls.has(base + 'input/tex/extensions/bbox.js'));
+  assert.ok(urls.has(base + 'input/tex/extensions/cancel.js'));
 });
