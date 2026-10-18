@@ -17,7 +17,11 @@ export async function createRuntime(options = {}) {
   await fs.chmod(directory, 0o700);
   const run = path.join(directory, 'run');
   await fs.mkdir(run, { mode: 0o700 });
-  const env = mediaEnvironment({ XDG_RUNTIME_DIR: run, PULSE_SERVER: `unix:${run}/pulse.sock`, PULSE_SINK: 'videoai2', PULSE_LATENCY_MSEC: '20' });
+  const config = path.join(directory, 'config');
+  await fs.mkdir(path.join(config, 'pulse'), { recursive: true, mode: 0o700 });
+  // A read-only worker image cannot create ~/.config/pulse in the account's
+  // system home. Give every media process a fresh, writable job-local home.
+  const env = mediaEnvironment({ HOME: directory, XDG_CONFIG_HOME: config, XDG_RUNTIME_DIR: run, PULSE_SERVER: `unix:${run}/pulse.sock`, PULSE_SINK: 'videoai2', PULSE_LATENCY_MSEC: '20' });
   let xvfb;
   let pulse;
   try {
