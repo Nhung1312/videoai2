@@ -48,3 +48,15 @@ test('three synthetic exports cannot unlock real Kore UI integration', () => {
   const reviewed = { ...cached, evidence: { firstCueAV: true, lastCueAV: true, motionReviewed: true } };
   assert.equal(evaluateBenchmark([reviewed, reviewed, reviewed]).passed, true);
 });
+test('only a measured silent raw tail may be padded; final duration stays strict', () => {
+  const raw = probe(); raw.streams[1].duration = '11.4';
+  assert.throws(() => validateProbe(raw, { sizeBytes: 1000, final: false }), /chênh/);
+  const valid = validateProbe(raw, { sizeBytes: 1000, final: false, maximumSilentTailGapSec: 0.7 });
+  assert.equal(valid.requiresTrailingSilencePadding, true);
+  assert.throws(() => validateProbe(raw, { sizeBytes: 1000, final: true, maximumSilentTailGapSec: 0.7 }), /chênh/);
+  raw.streams[1].duration = '11.1';
+  assert.throws(() => validateProbe(raw, { sizeBytes: 1000, final: false, maximumSilentTailGapSec: 0.7 }), /chênh/);
+  const args = normalizeArgs('a.mkv', 'a.mp4', { padAudioToSec: 12 });
+  assert.ok(args.includes('aresample=async=1:first_pts=0,apad=whole_dur=12.000000'));
+  assert.ok(!args.includes('-shortest'));
+});

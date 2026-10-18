@@ -8,7 +8,7 @@ export const ratio = value => {
   const [a, b = '1'] = String(value).split('/').map(Number);
   return b && Number.isFinite(a / b) ? a / b : NaN;
 };
-export function validateProbe(probe, { sizeBytes, toleranceSec = 0.25, minimumDuration = 0, final = true, maximumStartOffsetSec = toleranceSec } = {}) {
+export function validateProbe(probe, { sizeBytes, toleranceSec = 0.25, minimumDuration = 0, final = true, maximumStartOffsetSec = toleranceSec, maximumSilentTailGapSec = 0 } = {}) {
   const videos = probe.streams.filter(s => s.codec_type === 'video');
   const audios = probe.streams.filter(s => s.codec_type === 'audio');
   assertRender(videos.length === 1 && audios.length === 1 && probe.streams.length === 2, 'validation-error', 'Video phải có đúng một track hình và một track tiếng.');
@@ -34,12 +34,14 @@ export function validateProbe(probe, { sizeBytes, toleranceSec = 0.25, minimumDu
   // Only the final MP4 must also have equal track lengths and near-zero starts.
   const durationDifference = Math.abs(videoDuration - audioDuration);
   const endDifference = Math.abs(videoEnd - audioEnd);
-  assertRender((final ? durationDifference : endDifference) <= toleranceSec, 'validation-error', 'Thời lượng hình/tiếng chênh quá 0.25 giây.', { videoDuration, audioDuration, endDifference, toleranceSec });
+  const signedEndGap = videoEnd - audioEnd;
+  const endingValid = final ? durationDifference <= toleranceSec : signedEndGap >= 0 ? signedEndGap <= Math.max(toleranceSec, maximumSilentTailGapSec) : -signedEndGap <= toleranceSec;
+  assertRender(endingValid, 'validation-error', 'Thời lượng hình/tiếng chênh quá 0.25 giây.', { videoDuration, audioDuration, endDifference, toleranceSec });
   assertRender(Math.abs(ratio(video.avg_frame_rate) - 30) < 0.01 && Math.abs(ratio(video.r_frame_rate) - 30) < 0.01, 'validation-error', 'Tốc độ khung hình không phải 30 fps.');
   assertRender(Number.isFinite(frames) && frames > 0 && Math.abs(frames - videoDuration * 30) <= 2, 'validation-error', 'Số frame không khớp thời lượng 30 fps.', { frames, videoDuration });
   const offset = Math.abs(videoStart - audioStart);
   assertRender(Number.isFinite(videoStart) && Number.isFinite(audioStart) && videoStart >= -0.001 && audioStart >= -0.001 && offset <= maximumStartOffsetSec, 'validation-error', 'Hai track có độ lệch mốc bắt đầu quá lớn.', { offset, maximumStartOffsetSec });
-  return { sizeBytes, width: video.width, height: video.height, videoCodec: video.codec_name, audioCodec: audio.codec_name, audioProfile: audio.profile, pixelFormat: video.pix_fmt, videoDuration, audioDuration, durationDifference, endDifference, startOffset: offset, frames, fps: ratio(video.avg_frame_rate), durationToleranceSec: toleranceSec };
+  return { sizeBytes, width: video.width, height: video.height, videoCodec: video.codec_name, audioCodec: audio.codec_name, audioProfile: audio.profile, pixelFormat: video.pix_fmt, videoDuration, audioDuration, videoEnd, audioEnd, durationDifference, endDifference, requiresTrailingSilencePadding: !final && signedEndGap > toleranceSec, startOffset: offset, frames, fps: ratio(video.avg_frame_rate), durationToleranceSec: toleranceSec };
 }
 
 export async function validateVideo(file, options = {}) {

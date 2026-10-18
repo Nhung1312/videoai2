@@ -4,6 +4,9 @@ Giai đoạn 1, chưa thêm nút xuất vào app. Không thay đổi HTML bài g
 phát âm, AudioEngine, LessonModule, geometry engine hay bộ xuất LessonScript.
 Nút **Tải HTML + Kore để quay thủ công** vẫn được giữ nguyên.
 
+Nghiệm thu 18/10/2026: [bài thực tế 18 cue đã đạt 3/3](ACCEPTANCE.md) trong
+Docker offline, Chromium sandbox bật, 2 CPU / 4 GiB. Job API/UI chưa được tích hợp.
+
 ## Điều kiện chuyển sang tích hợp UI
 
 Chỉ tích hợp khi cùng một bài thực tế 15–20 cue dùng **đúng Kore đã cache**
@@ -44,6 +47,12 @@ PulseAudio khởi tạo sau input X11. Chỉ chấp nhận gap nằm trước st
 hai track kết thúc gần nhau; normalize giữ PTS và thêm silence đầu bằng
 `aresample=async=1:first_pts=0`. MP4 cuối vẫn phải đạt đủ kiểm tra mốc bắt đầu,
 thời lượng và ngưỡng 0.25 giây, không nới ngưỡng đầu ra.
+
+PulseAudio có thể ngừng cung cấp packet im lặng trước lúc khung hình cuối kết
+thúc. Chỉ cho phép gap nằm trong khoảng chờ đã đo sau `cue-end` cuối (tối đa
+1 giây, trừ biên 150 ms), và kiểm tra mẫu audio cuối thực sự im lặng. Normalize
+dùng `apad=whole_dur` theo thời điểm kết thúc video đã capture. Không cắt hoặc
+dịch lời đọc; MP4 cuối vẫn kiểm tra chênh thời lượng tối đa 0.25 giây.
 
 ## Package nhị phân
 
@@ -90,8 +99,10 @@ bị sửa. Không tự bịa Kore khi chỉ nhận HTML chưa có audio.
 
 Asset stager chạy **trước render**, tách khỏi worker offline. Chỉ cho CDN đã
 liệt kê, HTTPS, DNS IPv4 public được pin theo request, giới hạn redirect/kích
-thước và thu thập URL CSS. Renderer không truy cập CDN. Thư viện có lazy-load
-JS/font chưa được đóng gói sẽ báo URL thiếu và dừng job; cần bổ sung snapshot
+thước, thu thập URL trong CSS ngoài/inline và font `@import`. Các lệnh autoload
+mặc định và `require` của MathJax 3 được nhận diện để đóng gói extension như
+`color`, `bbox` trước khi chạy. Renderer không truy cập CDN. Thư viện có custom
+lazy-load JS/font chưa được đóng gói sẽ báo URL thiếu và dừng job; cần bổ sung snapshot
 tài nguyên ở bước packaging, không bắt giáo viên sửa HTML hay cho worker mở mạng.
 Không dùng stager như một proxy public.
 
@@ -113,6 +124,8 @@ docker run --rm --network none --read-only --cap-drop ALL \
 Thư mục output phải ghi được bởi UID 1001. Chạy từng container cho từng job,
 không mount repo, home, Docker socket hoặc secret của ứng dụng vào container.
 Không khai báo GEMINI_API_KEY/USER_GEMINI_API_KEY cho worker.
+HOME, XDG_CONFIG_HOME và cấu hình PulseAudio được tạo riêng trong thư mục tạm
+của job để chạy được với filesystem image chỉ đọc.
 
 Chromium sandbox bật mặc định; nếu host chặn sandbox, sửa cấu hình host/seccomp
 cho Chromium non-root, **không** bật no-sandbox cho dịch vụ chứa HTML không tin
