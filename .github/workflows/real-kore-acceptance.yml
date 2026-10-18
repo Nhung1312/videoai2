@@ -1,0 +1,75 @@
+name: Private real Kore acceptance
+on:
+  push:
+    branches: [codex/real-kore-acceptance]
+    paths: ['.github/workflows/real-kore-acceptance.yml', 'render-worker/src/**', 'render-worker/scripts/private-fixture.mjs', 'render-worker/Dockerfile']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-kore:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Create ephemeral input key
+        run: node render-worker/scripts/private-fixture.mjs init "$RUNNER_TEMP/kore-private"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-public-key
+          path: ${{ runner.temp }}/kore-private/exchange/
+          retention-days: 1
+      - name: Build offline renderer
+        run: docker build -f render-worker/Dockerfile -t videoai2-render .
+      - name: Permit Chromium user namespace sandbox on this ephemeral runner
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo sysctl -w kernel.unprivileged_userns_clone=1
+      - name: Receive encrypted lesson
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+        run: node render-worker/scripts/private-fixture.mjs receive "$RUNNER_TEMP/kore-private"
+      - name: Package cached Kore and stage MathJax
+        working-directory: render-worker
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node scripts/import-offline.mjs "$RUNNER_TEMP/kore-private/lesson.html" "$RUNNER_TEMP/kore-private/package"
+          node scripts/collect-assets.mjs "$RUNNER_TEMP/kore-private/package"
+          chmod -R a+rX "$RUNNER_TEMP/kore-private/package"
+          mkdir -p "$RUNNER_TEMP/kore-output"
+          chmod 0777 "$RUNNER_TEMP/kore-output"
+      - name: Three isolated renders with the Chromium sandbox enabled
+        run: |
+          failures=0
+          for attempt in 1 2 3; do
+            echo "Render attempt $attempt"
+            docker run --rm --network none --read-only --cap-drop ALL \
+              --security-opt no-new-privileges --security-opt seccomp=unconfined \
+              --cpus 2 --memory 4g --pids-limit 512 --shm-size 512m \
+              --tmpfs /tmp:rw,nosuid,nodev,size=768m,uid=1001,gid=1001 \
+              --mount "type=bind,src=$RUNNER_TEMP/kore-private/package,dst=/input,readonly" \
+              --mount "type=bind,src=$RUNNER_TEMP/kore-output,dst=/output" \
+              videoai2-render /input /output || failures=$((failures+1))
+          done
+          test "$failures" -eq 0
+      - name: Encrypt videos and diagnostic reports
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/kore-private/recipient.pem" && test -d "$RUNNER_TEMP/kore-output"; then
+            node render-worker/scripts/private-fixture.mjs seal "$RUNNER_TEMP/kore-private" "$RUNNER_TEMP/kore-output"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: encrypted-real-kore-results
+          path: ${{ runner.temp }}/kore-private/sealed/
+          retention-days: 1
+          if-no-files-found: ignore
+      - name: Remove ephemeral plaintext and keys
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/kore-private" "$RUNNER_TEMP/kore-output"
