@@ -12,6 +12,8 @@ import {
 } from 'lucide-react';
 import { AudioEngine } from '../lib/audioEngine';
 import { buildOfflineKoreHtml } from '../lib/htmlOfflineKoreExporter';
+import { needsStandaloneHtmlExport, openStandaloneHtmlExport } from '../lib/htmlExportWindowLauncher';
+import type { StandaloneHtmlExportCuePayload } from '../lib/htmlStandaloneExporter';
 import {
   HtmlNarrationCue,
   injectHtmlNarrationBridge,
@@ -49,6 +51,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
   const [sessionId, setSessionId] = useState(makeSessionId());
   const [runKey, setRunKey] = useState(0);
   const [recordingStatus, setRecordingStatus] = useState('');
+  const [isOpeningExport, setIsOpeningExport] = useState(false);
 
   const lessonId = useMemo(() => (rawHtml ? stableHtmlLessonId(rawHtml) : ''), [rawHtml]);
 
@@ -280,24 +283,49 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
     setStatus('Đang chạy lại bài với giọng Kore đã cache...');
   };
 
-  const openVideoExport = () => {
-    if (!rawHtml || cues.length === 0 || isPreparing) return;
+  const openVideoExport = async () => {
+    if (!rawHtml || cues.length === 0 || isPreparing || isOpeningExport) return;
 
     const exportId = makeSessionId();
     const storageKey = `videoai2-html-export:${exportId}`;
 
+    setIsOpeningExport(true);
     try {
-      localStorage.setItem(storageKey, JSON.stringify({
-        rawHtml,
-        fileName,
-        createdAt: Date.now(),
-      }));
-      const exportUrl = new URL(window.location.href);
-      exportUrl.searchParams.set('html-kore-export', exportId);
-      const exportWindow = window.open(exportUrl.href, '_blank');
-      if (!exportWindow) {
-        localStorage.removeItem(storageKey);
-        throw new Error('Trình duyệt đã chặn tab xuất video. Hãy cho phép mở cửa sổ bật lên rồi bấm lại.');
+      if (needsStandaloneHtmlExport()) {
+        await openStandaloneHtmlExport(exportId, async () => {
+          const cachedCues: StandaloneHtmlExportCuePayload[] = [];
+          for (let i = 0; i < cues.length; i++) {
+            const cue = cues[i];
+            const narration = normalizeHtmlNarration(cue.narration);
+            const stepId = `${lessonId}:${cue.id}`;
+            setRecordingStatus(`Đang nạp Kore đã cache ${i + 1}/${cues.length}...`);
+            const cached = AudioEngine.getCachedAudio(stepId, narration, 'Kore') ||
+              await AudioEngine.loadStepAudio(stepId, narration, 'Kore', { allowApi: false });
+            if (!cached) throw new Error(AudioEngine.getStepError(stepId) || 'Thiếu Kore đã cache. Hãy bấm “Chuẩn bị Kore & Chạy” trước khi xuất.');
+            cachedCues.push({ id: cue.id, narration, audio: cached.arrayBuffer.slice(0) });
+          }
+          const exportSession = makeSessionId();
+          return {
+            sessionId: exportSession,
+            runningHtml: injectHtmlNarrationBridge(injectHtmlRecordingLayout(rawHtml), exportSession, lessonId),
+            fileName: fileName || 'bai-giang.html',
+            playbackRate: AudioEngine.getPlaybackRateMultiplier(),
+            cues: cachedCues,
+          };
+        });
+      } else {
+        localStorage.setItem(storageKey, JSON.stringify({
+          rawHtml,
+          fileName,
+          createdAt: Date.now(),
+        }));
+        const exportUrl = new URL(window.location.href);
+        exportUrl.searchParams.set('html-kore-export', exportId);
+        const exportWindow = window.open(exportUrl.href, '_blank');
+        if (!exportWindow) {
+          localStorage.removeItem(storageKey);
+          throw new Error('Trình duyệt đã chặn tab xuất video. Hãy cho phép mở cửa sổ bật lên rồi bấm lại.');
+        }
       }
 
       activeSessionRef.current = '';
@@ -308,6 +336,8 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       setRecordingStatus('Đã mở cửa sổ xuất video. Chọn “Bắt đầu xuất video 9:16” trong tab mới.');
     } catch (err: any) {
       setRecordingStatus(err?.message || 'Không mở được cửa sổ xuất video.');
+    } finally {
+      setIsOpeningExport(false);
     }
   };
 
@@ -496,7 +526,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
 
             <button
               onClick={openVideoExport}
-              disabled={!rawHtml || cues.length === 0 || isPreparing}
+              disabled={!rawHtml || cues.length === 0 || isPreparing || isOpeningExport}
               className="w-full px-4 py-2.5 rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white flex items-center justify-center gap-2 cursor-pointer"
             >
               <Download className="w-4 h-4" />
