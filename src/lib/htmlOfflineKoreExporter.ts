@@ -175,14 +175,14 @@ export const buildOfflineKoreHtml = (
 
     const overlay = document.createElement('div');
     overlay.id = 'videoai2-kore-start';
-    overlay.innerHTML = `
+    overlay.innerHTML = \`
       <div class="card">
         <h2>HTML + Kore sẵn sàng</h2>
         <p>Bật quay màn hình của bạn trước. Sau đó bấm nút dưới đây để bài giảng bắt đầu từ đầu với tiếng Kore đồng bộ.</p>
         <button type="button">Bắt đầu bài giảng có tiếng</button>
         <div class="status">Đang chờ bạn bắt đầu...</div>
       </div>
-    `;
+    \`;
 
     document.body.appendChild(overlay);
     const button = overlay.querySelector('button');
