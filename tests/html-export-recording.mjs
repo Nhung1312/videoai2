@@ -41,6 +41,10 @@ try {
         localStorage.setItem('videoai2-html-export:'+id,JSON.stringify({rawHtml:html,fileName:'diagnostic.html'}));
       },{id,html,audioBase64,seconds});await host.goto('http://127.0.0.1:4173/?html-kore-export='+id);await host.getByText('Kore đã sẵn sàng. Bấm “Bắt đầu xuất video”.',{exact:true}).waitFor();
     }
+    // Playwright enables focus emulation for every target by default, making
+    // background tabs appear visible. Disable it to test real visibility events.
+    const cdp=await context.newCDPSession(page);
+    await cdp.send('Emulation.setFocusEmulationEnabled',{enabled:false});
     await page.bringToFront();
     await page.evaluate(webm=>{
       navigator.mediaDevices.getDisplayMedia=async()=>{
@@ -51,6 +55,18 @@ try {
     },webm);
     return {page,host};
   }
+  for(const kind of ['normal','standalone']){
+    const {page,host}=await create(kind,20);let downloads=0;page.on('download',()=>downloads++);
+    await page.getByRole('button',{name:'Bắt đầu xuất video 9:16',exact:true}).click();
+    await page.waitForFunction(()=>[...document.querySelectorAll('iframe')].some(f=>(f.getAttribute('srcdoc')||'').includes('narrationScript')));
+    const other=await context.newPage();await other.goto('about:blank');await other.bringToFront();
+    console.log('Background tab state',kind,await page.evaluate(()=>({visibility:document.visibilityState,body:document.body.innerText})));
+    await page.waitForFunction(()=>document.body.innerText.includes('Tab xuất đã bị ẩn'),null,{timeout:5000,polling:100}).catch(async e=>{console.error('Background UI at failure:',await page.locator('body').innerText());throw e;});
+    assert.equal(downloads,0);await other.close();await page.close();if(host!==page)await host.close();console.log('PASS: hidden '+kind+' recording discarded');
+  }
+  const {page,host}=await create('standalone',20);let downloads=0;page.on('download',()=>downloads++);
+  await page.getByRole('button',{name:'Bắt đầu xuất video 9:16',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#lesson')?.getAttribute('srcdoc')?.includes('narrationScript'));
+  await page.evaluate(()=>{window.requestAnimationFrame=()=>0;});await page.getByText(/Hình bị gián đoạn/).waitFor();assert.equal(downloads,0);await page.close();await host.close();
   const results=[];
   for(const [kind,seconds,webm] of [['normal',4,false],['standalone',4,false],['standalone',4,true],['standalone',120,false]]){
     const {page,host}=await create(kind,seconds,webm);const downloads=[];page.on('download',d=>downloads.push(d));
@@ -70,16 +86,5 @@ try {
     results.push({kind,seconds,webm,wall:(Date.now()-wall)/1000,duration:probe.format.duration,video,audio,format:probe.format.format_name});
     console.log('PASS: native recording',JSON.stringify(results.at(-1)));await page.close();if(host!==page)await host.close();
   }
-  for(const kind of ['normal','standalone']){
-    const {page,host}=await create(kind,20);let downloads=0;page.on('download',()=>downloads++);
-    await page.getByRole('button',{name:'Bắt đầu xuất video 9:16',exact:true}).click();
-    await page.waitForFunction(()=>[...document.querySelectorAll('iframe')].some(f=>(f.getAttribute('srcdoc')||'').includes('narrationScript')));
-    const other=await context.newPage();await other.goto('about:blank');await other.bringToFront();
-    await page.waitForFunction(()=>document.body.innerText.includes('Tab xuất đã bị ẩn'),null,{timeout:5000,polling:100});
-    assert.equal(downloads,0);await other.close();await page.close();if(host!==page)await host.close();console.log('PASS: hidden '+kind+' recording discarded');
-  }
-  const {page,host}=await create('standalone',20);let downloads=0;page.on('download',()=>downloads++);
-  await page.getByRole('button',{name:'Bắt đầu xuất video 9:16',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#lesson')?.getAttribute('srcdoc')?.includes('narrationScript'));
-  await page.evaluate(()=>{window.requestAnimationFrame=()=>0;});await page.getByText(/Hình bị gián đoạn/).waitFor();assert.equal(downloads,0);await page.close();await host.close();
   assert.equal(apiCalls,0);assert.deepEqual(errors,[]);await fs.writeFile(path.join(output,'results.json'),JSON.stringify({results,hidden:'PASS',stalled:'PASS',apiCalls},null,2));
 }finally{await browser?.close();server.kill();}
