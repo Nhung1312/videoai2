@@ -71,6 +71,7 @@ try {
   const {page,host}=await create('standalone',20);let downloads=0;page.on('download',()=>downloads++);
   await page.getByRole('button',{name:'Bắt đầu xuất video 9:16',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#lesson')?.getAttribute('srcdoc')?.includes('narrationScript'));
   await page.evaluate(()=>{window.requestAnimationFrame=()=>0;});await page.getByText(/Hình bị gián đoạn/).waitFor();assert.equal(downloads,0);assert.equal(await page.evaluate(()=>window.__downloadClicks),0);await page.close();await host.close();
+  await visibilityBrowser.close();visibilityBrowser=null;
   // Positive recordings use Playwright's ordinary download handling.
   context=await browser.newContext({viewport:{width:1000,height:900},acceptDownloads:true});
   await configure(context);
