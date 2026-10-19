@@ -280,6 +280,37 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
     setStatus('Đang chạy lại bài với giọng Kore đã cache...');
   };
 
+  const openVideoExport = () => {
+    if (!rawHtml || cues.length === 0 || isPreparing) return;
+
+    const exportId = makeSessionId();
+    const storageKey = `videoai2-html-export:${exportId}`;
+
+    try {
+      localStorage.setItem(storageKey, JSON.stringify({
+        rawHtml,
+        fileName,
+        createdAt: Date.now(),
+      }));
+      const exportUrl = new URL(window.location.href);
+      exportUrl.searchParams.set('html-kore-export', exportId);
+      const exportWindow = window.open(exportUrl.href, '_blank');
+      if (!exportWindow) {
+        localStorage.removeItem(storageKey);
+        throw new Error('Trình duyệt đã chặn tab xuất video. Hãy cho phép mở cửa sổ bật lên rồi bấm lại.');
+      }
+
+      activeSessionRef.current = '';
+      narrationQueueRef.current = Promise.resolve();
+      stopActiveAudio();
+      setRunningHtml('');
+      setError(null);
+      setRecordingStatus('Đã mở cửa sổ xuất video. Chọn “Bắt đầu xuất video 9:16” trong tab mới.');
+    } catch (err: any) {
+      setError(err?.message || 'Không mở được cửa sổ xuất video.');
+    }
+  };
+
   const startHtmlRecording = async () => {
     if (!rawHtml || cues.length === 0 || !lessonId || isPreparing) return;
 
@@ -361,7 +392,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       window.setTimeout(() => URL.revokeObjectURL(url), 5000);
 
       setRecordingStatus(
-        'Đã tải HTML có sẵn tiếng Kore. Mở file đó → bật quay màn hình của bạn → bấm “Bắt đầu bài giảng có tiếng”. Không còn dùng bộ xuất video tự động.'
+        'Đã tải HTML có sẵn tiếng Kore. Mở file đó → bật quay màn hình của bạn → bấm “Bắt đầu bài giảng có tiếng”.'
       );
     } catch (err: any) {
       setRecordingStatus('');
@@ -462,6 +493,19 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
               <Play className="w-3.5 h-3.5" />
               Chạy lại (dùng cache)
             </button>
+
+            <button
+              onClick={openVideoExport}
+              disabled={!rawHtml || cues.length === 0 || isPreparing}
+              className="w-full px-4 py-2.5 rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Download className="w-4 h-4" />
+              Xuất video 9:16
+            </button>
+
+            <div className="text-[11px] leading-relaxed text-slate-400">
+              Chuẩn bị Kore trước, rồi xuất video trong tab mới bằng giọng đã cache.
+            </div>
 
             <button
               onClick={startHtmlRecording}

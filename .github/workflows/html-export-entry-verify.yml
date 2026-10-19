@@ -1,0 +1,28 @@
+name: HTML export entry verification
+on:
+  push:
+    branches: [codex/html-export-entry-20261019]
+permissions:
+  contents: read
+jobs:
+  entry:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --legacy-peer-deps --no-audit --no-fund --package-lock=false
+      - run: npm run build
+      - run: npm run lint
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: render-worker
+      - run: npm test
+        working-directory: render-worker
+      - name: Existing exporter entry and manual HTML regression
+        env:
+          CHROMIUM_BIN: /usr/bin/google-chrome
+        run: node tests/html-export-entry.mjs
