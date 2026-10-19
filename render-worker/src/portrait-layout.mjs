@@ -123,7 +123,7 @@ export function injectPortraitLayout(html) {
     .board::after { content:''; display:block; flex:0 0 var(--videoai2-end-space,512px); height:var(--videoai2-end-space,512px); }
     .step-box { box-sizing:border-box; flex-shrink:0; }
     .step-box[data-videoai2-current] { opacity:1!important; }
-    .step-box[data-videoai2-current] .step-title { position:sticky; top:0; z-index:3; background:#111424; }
+    .step-box[data-videoai2-current] .step-title { position:sticky; top:0; z-index:3; background:#111424; box-shadow:0 -12px 0 #111424; }
     .step-box::-webkit-scrollbar { display:none; }
     .step-box { scrollbar-width:none; }
     .math-line:not(.show) { display:none!important; }

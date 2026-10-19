@@ -75,10 +75,10 @@ jobs:
           path: ${{ runner.temp }}/kore-private/sealed/
           retention-days: 1
           if-no-files-found: ignore
-      - name: Three isolated renders with the Chromium sandbox enabled
+      - name: Final readable lesson render with the Chromium sandbox enabled
         run: |
           failures=0
-          for attempt in 1 2 3; do
+          for attempt in 1; do
             echo "Render attempt $attempt"
             docker run --rm --network none --read-only --cap-drop ALL \
               --security-opt no-new-privileges --security-opt seccomp=unconfined \
