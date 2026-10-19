@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Loader2, Play, XCircle } from 'lucide-react';
 import { AudioEngine } from '../lib/audioEngine';
+import { createHtmlExportGuard, readHtmlRecordingDurations, assertHtmlRecordingDurations } from '../lib/htmlExportSafety';
 import {
   HtmlNarrationCue,
   injectHtmlNarrationBridge,
@@ -42,6 +43,9 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
   const activeSessionRef = useRef('');
   const narrationQueueRef = useRef<Promise<void>>(Promise.resolve());
   const lessonCompletedRef = useRef(false);
+  const exportGuardRef = useRef<ReturnType<typeof createHtmlExportGuard> | null>(null);
+  const abortReasonRef = useRef('');
+  const keepAliveRef = useRef<ConstantSourceNode | null>(null);
 
   const [payload, setPayload] = useState<HtmlExportPayload | null>(null);
   const [cues, setCues] = useState<HtmlNarrationCue[]>([]);
@@ -60,6 +64,10 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
   );
 
   const cleanupCapture = () => {
+    exportGuardRef.current?.dispose();
+    exportGuardRef.current = null;
+    try { keepAliveRef.current?.stop(); } catch {}
+    keepAliveRef.current = null;
     if (captureRafRef.current != null) {
       cancelAnimationFrame(captureRafRef.current);
       captureRafRef.current = null;
@@ -143,6 +151,21 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
     if (recorder && recorder.state !== 'inactive') {
       recorder.stop();
     }
+  };
+
+  const abortExport = (message: string) => {
+    if (abortReasonRef.current) return;
+    abortReasonRef.current = message;
+    activeSessionRef.current = '';
+    narrationQueueRef.current = Promise.resolve();
+    stopActiveAudio();
+    stopRecorder();
+    cleanupCapture();
+    chunksRef.current = [];
+    setRunningHtml('');
+    setIsRecording(false);
+    setError(message);
+    setStatus('Bản ghi đã bị hủy. Hãy giữ tab xuất ở phía trước và xuất lại.');
   };
 
   useEffect(() => {
@@ -276,7 +299,7 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
             },
             '*'
           );
-          stopRecorder();
+          abortExport(message);
         }
       };
 
@@ -306,13 +329,20 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
     const ctx = outputCanvas.getContext('2d', { alpha: false });
     if (!ctx) throw new Error('Không khởi tạo được Canvas dựng video.');
 
-    const draw = () => {
+    let lastPaint = -Infinity;
+    let frameTick = 0;
+    const draw = (now: number) => {
+      if (abortReasonRef.current) return;
+      if (now - lastPaint < 1000 / 30) { captureRafRef.current = requestAnimationFrame(draw); return; }
       const frame = frameRef.current;
       if (!frame || sourceVideo.readyState < 2) {
         captureRafRef.current = requestAnimationFrame(draw);
         return;
       }
 
+      exportGuardRef.current?.frame();
+      if (abortReasonRef.current) return;
+      lastPaint = now;
       const rect = frame.getBoundingClientRect();
       const scaleX = sourceVideo.videoWidth / Math.max(1, window.innerWidth);
       const scaleY = sourceVideo.videoHeight / Math.max(1, window.innerHeight);
@@ -336,10 +366,12 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
         outputCanvas.height
       );
 
+      ctx.fillStyle = frameTick++ % 2 ? '#000000' : '#010101';
+      ctx.fillRect(outputCanvas.width - 1, outputCanvas.height - 1, 1, 1);
       captureRafRef.current = requestAnimationFrame(draw);
     };
 
-    draw();
+    captureRafRef.current = requestAnimationFrame(draw);
   };
 
   const startExport = async () => {
@@ -350,6 +382,7 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
       return;
     }
 
+    abortReasonRef.current = '';
     setError(null);
     setStatus('Hãy chọn đúng TAB xuất video này. Không cần bật chia sẻ âm thanh.');
 
@@ -357,6 +390,9 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
       const audioCtx = await ensureAudioContext();
       const audioDestination = audioCtx.createMediaStreamDestination();
       audioDestinationRef.current = audioDestination;
+      const keepAlive = audioCtx.createConstantSource();
+      keepAlive.offset.value = 0; keepAlive.connect(audioDestination); keepAlive.start();
+      keepAliveRef.current = keepAlive;
 
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: 30 },
@@ -402,7 +438,8 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
       outputStreamRef.current = combinedStream;
 
       const mimeCandidates = [
-        'video/mp4',
+        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+        'video/mp4;codecs=avc1,mp4a.40.2',
         'video/webm;codecs=vp9,opus',
         'video/webm;codecs=vp8,opus',
         'video/webm',
@@ -421,14 +458,15 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
       recorderRef.current = recorder;
 
       recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunksRef.current.push(event.data);
+        if (event.data.size > 0 && !abortReasonRef.current) chunksRef.current.push(event.data);
       };
 
       recorder.onerror = () => {
-        setError('Có lỗi khi mã hóa video.');
+        abortExport('Có lỗi khi mã hóa video.');
       };
 
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
+        const timing = exportGuardRef.current?.finish();
         const chunks = chunksRef.current;
         chunksRef.current = [];
         recorderRef.current = null;
@@ -439,6 +477,8 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
         setRunningHtml('');
         setIsRecording(false);
 
+        if (abortReasonRef.current || timing?.failure) { setError(abortReasonRef.current || timing?.failure || 'Bản ghi bị hủy.'); return; }
+        if (!lessonCompletedRef.current) { setError('Bài giảng chưa hoàn tất. Đã hủy bản ghi dừng sớm.'); return; }
         if (chunks.length === 0) {
           setError('Không nhận được dữ liệu video để lưu.');
           setStatus('');
@@ -448,6 +488,11 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
         const type = recorder.mimeType || mimeType || 'video/webm';
         const ext = type.includes('mp4') ? 'mp4' : 'webm';
         const blob = new Blob(chunks, { type });
+        try {
+          setStatus('Đang kiểm tra thời lượng hình và tiếng...');
+          const durations = readHtmlRecordingDurations(await blob.arrayBuffer());
+          assertHtmlRecordingDurations(durations, timing?.elapsed || 0);
+        } catch (error: any) { setError(error?.message || 'Không kiểm tra được bản ghi.'); setStatus('Bản ghi lỗi đã bị hủy.'); return; }
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         const baseName =
@@ -472,9 +517,14 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
       };
 
       displayTrack?.addEventListener('ended', () => {
-        if (recorder.state === 'recording') recorder.stop();
+        if (!lessonCompletedRef.current) abortExport('Luồng chia sẻ đã dừng trước khi bài giảng hoàn tất.');
+        else if (recorder.state === 'recording') recorder.stop();
       });
 
+      if (document.visibilityState !== 'visible') throw new Error('Hãy giữ tab xuất ở phía trước.');
+      const voiceSeconds = cues.reduce((sum, cue) => sum + (AudioEngine.getStepDuration(`${lessonId}:${cue.id}`) || 0), 0) / AudioEngine.getPlaybackRateMultiplier();
+      exportGuardRef.current = createHtmlExportGuard(abortExport, () => audioCtx.currentTime, voiceSeconds + Math.max(20, cues.length * 2));
+      exportGuardRef.current.start();
       recorder.start(500);
       setIsRecording(true);
 
@@ -482,6 +532,7 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
         requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
       );
 
+      if (abortReasonRef.current) return;
       startFrameCropLoop(sourceVideo, outputCanvas);
 
       stopActiveAudio();
@@ -499,6 +550,10 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
       setRunKey((value) => value + 1);
       setStatus('Đang ghi video 9:16 + Kore...');
     } catch (err: any) {
+      if (recorderRef.current?.state === 'recording') {
+        abortExport(err?.message || 'Không bắt đầu được quá trình xuất video.');
+        return;
+      }
       cleanupCapture();
       recorderRef.current = null;
       setIsRecording(false);
@@ -563,6 +618,7 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
         <div className="rounded-xl bg-slate-950/60 p-4 text-sm text-slate-300 leading-relaxed mb-5">
           Khi trình duyệt hỏi chia sẻ màn hình, hãy chọn <strong>đúng tab này</strong>.
           Không cần bật “Chia sẻ âm thanh”, vì giọng Kore được app ghép trực tiếp vào video.
+          {' '}Trong lúc ghi, phải giữ tab này ở phía trước. Chuyển tab hoặc thu nhỏ cửa sổ sẽ dừng và hủy bản ghi.
         </div>
 
         {!isCompleted ? (
