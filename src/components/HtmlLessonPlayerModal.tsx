@@ -307,7 +307,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       setError(null);
       setRecordingStatus('Đã mở cửa sổ xuất video. Chọn “Bắt đầu xuất video 9:16” trong tab mới.');
     } catch (err: any) {
-      setError(err?.message || 'Không mở được cửa sổ xuất video.');
+      setRecordingStatus(err?.message || 'Không mở được cửa sổ xuất video.');
     }
   };
 
