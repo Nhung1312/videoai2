@@ -8,10 +8,10 @@ import { chromium } from '../render-worker/node_modules/playwright-core/index.mj
 const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '4173', '--strictPort'], { stdio: 'ignore' });
 let browser;
 const html = `<!doctype html><html><head><title>Entry test</title></head><body><p>Bài kiểm tra</p><script>
-const narrationScript = { intro: 'Kiểm tra giọng đã lưu.' };
+const narrationScript = { 'intro': 'Kiểm tra giọng đã lưu.' };
 async function cue(id) { await window.onNarrationCue(id); }
 async function startAnimation() { await cue('intro'); }
-startAnimation();</script></body></html>`;
+window.addEventListener('load', () => void startAnimation());</script></body></html>`;
 const wav = Buffer.alloc(44 + 16000);
 wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
 wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
