@@ -142,7 +142,7 @@ export const writeStandaloneHtmlExportShell = (
       <div class="tip">
         Khi trình duyệt hỏi chia sẻ, hãy chọn <b>chính tab “Xuất video HTML + Kore” này</b>.
         Không cần bật chia sẻ âm thanh; Kore được ghép trực tiếp vào file video.
-        Trong lúc xuất, hãy giữ tab này đang mở để animation chạy mượt.
+        Trong lúc ghi, phải giữ tab này ở phía trước. Chuyển tab hoặc thu nhỏ cửa sổ sẽ dừng và hủy bản ghi.
       </div>
       <button id="start" disabled>Bắt đầu xuất video 9:16</button>
     </section>
@@ -685,6 +685,10 @@ export const writeStandaloneHtmlExportShell = (
         if (abortReason) return;
         lesson.srcdoc = payload.runningHtml;
       } catch (err) {
+        if (recorder?.state === 'recording') {
+          abortExport(err?.message || 'Không bắt đầu được quá trình xuất video.');
+          return;
+        }
         cleanupCapture();
         startButton.disabled = false;
         showError(err?.message || 'Không bắt đầu được quá trình xuất video.');

@@ -59,9 +59,15 @@ try {
     const wall=Date.now();await page.getByRole('button',{name:'Bắt đầu xuất video 9:16',exact:true}).click();
     const download=await Promise.race([file,failed]);const out=path.join(output,kind+'-'+seconds+(webm?'-webm':'')+path.extname(download.suggestedFilename()));await download.saveAs(out);
     const probe=JSON.parse(execFileSync('ffprobe',['-v','error','-show_streams','-show_format','-of','json',out]));
-    const v=probe.streams.find(s=>s.codec_type==='video'),a=probe.streams.find(s=>s.codec_type==='audio');assert.ok(v&&a);assert.equal(v.width,720);assert.equal(v.height,1280);assert.ok(Math.abs(Number(probe.format.duration)-seconds)<4);
+    const v=probe.streams.find(s=>s.codec_type==='video'),a=probe.streams.find(s=>s.codec_type==='audio');assert.ok(v&&a);assert.equal(v.width,720);assert.equal(v.height,1280);
+    // Live MediaRecorder WebM need not contain a container Duration element.
+    // Independently measure both encoded tracks with ffprobe packet timestamps.
+    const packets=JSON.parse(execFileSync('ffprobe',['-v','error','-show_packets','-show_entries','packet=stream_index,pts_time,duration_time','-of','json',out],{maxBuffer:32*1024*1024})).packets;
+    const end=index=>Math.max(...packets.filter(p=>p.stream_index===index).map(p=>Number(p.pts_time)+Number(p.duration_time||0)));
+    const video=end(v.index),audio=end(a.index);
+    assert.ok(Math.abs(video-seconds)<4,JSON.stringify({kind,seconds,video,audio}));assert.ok(Math.abs(video-audio)<0.5,JSON.stringify({video,audio}));
     execFileSync('ffmpeg',['-v','error','-xerror','-i',out,'-f','null','-']);
-    results.push({kind,seconds,webm,wall:(Date.now()-wall)/1000,duration:probe.format.duration,video:v.duration,audio:a.duration,format:probe.format.format_name});
+    results.push({kind,seconds,webm,wall:(Date.now()-wall)/1000,duration:probe.format.duration,video,audio,format:probe.format.format_name});
     console.log('PASS: native recording',JSON.stringify(results.at(-1)));await page.close();if(host!==page)await host.close();
   }
   for(const kind of ['normal','standalone']){

@@ -550,6 +550,10 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
       setRunKey((value) => value + 1);
       setStatus('Đang ghi video 9:16 + Kore...');
     } catch (err: any) {
+      if (recorderRef.current?.state === 'recording') {
+        abortExport(err?.message || 'Không bắt đầu được quá trình xuất video.');
+        return;
+      }
       cleanupCapture();
       recorderRef.current = null;
       setIsRecording(false);
@@ -614,6 +618,7 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
         <div className="rounded-xl bg-slate-950/60 p-4 text-sm text-slate-300 leading-relaxed mb-5">
           Khi trình duyệt hỏi chia sẻ màn hình, hãy chọn <strong>đúng tab này</strong>.
           Không cần bật “Chia sẻ âm thanh”, vì giọng Kore được app ghép trực tiếp vào video.
+          {' '}Trong lúc ghi, phải giữ tab này ở phía trước. Chuyển tab hoặc thu nhỏ cửa sổ sẽ dừng và hủy bản ghi.
         </div>
 
         {!isCompleted ? (
