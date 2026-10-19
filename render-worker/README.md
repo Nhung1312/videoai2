@@ -5,7 +5,8 @@ phát âm, AudioEngine, LessonModule, geometry engine hay bộ xuất LessonScri
 Nút **Tải HTML + Kore để quay thủ công** vẫn được giữ nguyên.
 
 Nghiệm thu 18/10/2026: [bài thực tế 18 cue đã đạt 3/3](ACCEPTANCE.md) trong
-Docker offline, Chromium sandbox bật, 2 CPU / 4 GiB. Job API/UI chưa được tích hợp.
+Docker offline, Chromium sandbox bật, 2 CPU / 4 GiB. Bố cục chữ lớn theo video
+tham chiếu được xác minh riêng ngày 19/10, xem cùng báo cáo. Job API/UI chưa được tích hợp.
 
 ## Điều kiện chuyển sang tích hợp UI
 
@@ -53,6 +54,25 @@ thúc. Chỉ cho phép gap nằm trong khoảng chờ đã đo sau `cue-end` cu�
 1 giây, trừ biên 150 ms), và kiểm tra mẫu audio cuối thực sự im lặng. Normalize
 dùng `apad=whole_dur` theo thời điểm kết thúc video đã capture. Không cắt hoặc
 dịch lời đọc; MP4 cuối vẫn kiểm tra chênh thời lượng tối đa 0.25 giây.
+
+## Chữ lớn trong video dọc
+
+Bài có cấu trúc `.container` / `#board` / `.step-box` được render ở viewport
+CSS 288×512, DPR 2.5: raster Chromium và file MP4 vẫn là 720×1280, không phóng
+video sau khi quay. Chữ 16–18 CSS px thành khoảng 40–45 pixel trong video,
+thay vì quá nhỏ khi trải nguyên CSS trên viewport 720 px.
+
+Chỉ bản HTML runtime được thêm layout: đề bài giữ phía trên, board dùng phần
+chiều cao còn lại, cuộn tới bước hiện tại. Bước vừa khung giữ 85–100% cỡ chữ;
+bước quá dài giữ 100% và cuộn theo dòng/công thức đang xuất hiện, tiêu đề bước
+được giữ ở đầu vùng đọc. Công thức SVG được giới hạn theo chiều rộng. Bước cũ
+vẫn nằm trong DOM và được cuộn ra khỏi vùng đọc; không cần nhét mọi bước cùng
+lúc bằng cách thu chữ xuống rất nhỏ. Emoji dùng font fallback trong image.
+
+Không sửa file HTML đầu vào, thân animation, thời gian cue hoặc clip Kore.
+HTML không nhận diện được cấu trúc trên vẫn dùng profile cũ 720×1280 / DPR 1;
+profile này không phải bộ sửa bố cục tổng quát cho mọi HTML Gemini tùy ý.
+API nội bộ `openRunner(..., { readablePortrait: false })` tắt profile để đối chiếu.
 
 ## Package nhị phân
 

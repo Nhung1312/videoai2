@@ -4,11 +4,14 @@ import { gateLessonHtml, BRIDGE_KEY } from './transform.mjs';
 import { runnerPrelude } from './runner.mjs';
 import { ORIGIN } from './package.mjs';
 import { RenderError } from './errors.mjs';
+import { portraitViewport, injectPortraitLayout } from './portrait-layout.mjs';
 
 export function buildRunnerHtml(pkg, options = {}) {
   const gated = gateLessonHtml(pkg.html);
-  const html = gated.includes('data-videoai2-recording-layout') ? gated : injectHtmlRecordingLayout(gated);
-  const prelude = runnerPrelude({ bridgeKey: BRIDGE_KEY, cues: pkg.cues, requiredCueIds: pkg.inspection.cueIds, playbackRate: pkg.manifest.playbackRate, tailMs: options.tailMs ?? 700, settleTimeoutMs: options.settleTimeoutMs ?? 10000 });
+  const viewport = portraitViewport(pkg.html, options);
+  let html = gated.includes('data-videoai2-recording-layout') ? gated : injectHtmlRecordingLayout(gated);
+  if (viewport.readable) html = injectPortraitLayout(html);
+  const prelude = runnerPrelude({ bridgeKey: BRIDGE_KEY, cues: pkg.cues, requiredCueIds: pkg.inspection.cueIds, playbackRate: pkg.manifest.playbackRate, viewport, tailMs: options.tailMs ?? 700, settleTimeoutMs: options.settleTimeoutMs ?? 10000 });
   // parse5 normalizes missing head tags, but don't normalize author markup.
   // The supported package is a complete HTML document with a head element.
   if (!/<head(?:\s[^>]*)?>/i.test(html)) throw new RenderError('package-error', 'HTML cần có thẻ head.');
@@ -17,17 +20,18 @@ export function buildRunnerHtml(pkg, options = {}) {
 
 export async function openRunner(pkg, runtime, options = {}) {
   const rejected = [];
+  const viewport = portraitViewport(pkg.html, options);
   const browser = await chromium.launch({
     executablePath: options.chromiumPath,
     headless: options.headless ?? false,
     chromiumSandbox: !options.allowUnsandboxed,
     env: runtime.env,
     proxy: { server: 'http://127.0.0.1:9', bypass: '<-loopback>' },
-    args: ['--kiosk', '--start-fullscreen', '--window-position=0,0', '--window-size=720,1280', '--force-device-scale-factor=1', '--autoplay-policy=no-user-gesture-required', '--disable-quic', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--no-first-run', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--disable-features=MediaRouter'],
+    args: ['--kiosk', '--start-fullscreen', '--window-position=0,0', `--window-size=${viewport.width},${viewport.height}`, `--force-device-scale-factor=${viewport.deviceScaleFactor}`, '--autoplay-policy=no-user-gesture-required', '--disable-quic', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--no-first-run', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--disable-features=MediaRouter'],
   });
   const preparationTimer = setTimeout(() => { void browser.close(); }, options.prepareTimeoutMs ?? 60000);
   try {
-    const context = await browser.newContext({ viewport: { width: 720, height: 1280 }, deviceScaleFactor: 1, serviceWorkers: 'block', acceptDownloads: false, bypassCSP: true });
+    const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, deviceScaleFactor: viewport.deviceScaleFactor, serviceWorkers: 'block', acceptDownloads: false, bypassCSP: true });
     await context.routeWebSocket('**/*', socket => { rejected.push({ url: socket.url(), kind: 'websocket' }); socket.close(); });
     const html = buildRunnerHtml(pkg, options);
     await context.route('**/*', async route => {

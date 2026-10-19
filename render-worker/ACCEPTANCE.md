@@ -1,6 +1,8 @@
-# Nghiệm thu bài HTML + Kore thực tế — 18/10/2026
+# Kiểm thử HTML + Kore thực tế — 18–19/10/2026
 
-**Giai đoạn 1 đạt 3/3 với cùng một bài 18 cue và đúng Kore cache.**
+**Pipeline hình/tiếng ngày 18/10 đạt 3/3 với cùng một bài 18 cue và đúng Kore cache.**
+Người dùng sau đó phản hồi chữ quá nhỏ: kết quả kỹ thuật này không có nghĩa
+bố cục ban đầu đã đạt yêu cầu đọc trên điện thoại.
 Chưa tích hợp Job API/nút xuất vào app, chưa deploy worker.
 
 - [CI trọn luồng](https://github.com/Nhung1312/videoai2/actions/runs/39115752572), mã worker được kiểm thử: `0cefcc38f96e523ca39d22ab8a8f884181311303`.
@@ -15,6 +17,39 @@ Chưa tích hợp Job API/nút xuất vào app, chưa deploy worker.
 | 1 | 126.766667 s | 3803 | 0.667 ms | 46.12 ms | 55.21 ms | 11.18 ms | 0.869 s |
 | 2 | 126.800000 s | 3804 | 0.000 ms | 45.50 ms | 26.54 ms | 14.33 ms | 0.940 s |
 | 3 | 126.666667 s | 3800 | 0.667 ms | 40.25 ms | 54.50 ms | 18.65 ms | 0.801 s |
+
+## Sửa cỡ chữ và vùng đọc — 19/10/2026
+
+- [CI bản cuối](https://github.com/Nhung1312/videoai2/actions/runs/39194946632),
+  source `e023f735cd798cd3af78942a3d8af97f6ba76c20`.
+- 20/20 test logic và test Chromium native về cỡ chữ, viewport/DPR, gate,
+  đoạn rất dài, dòng cuối và tiêu đề sticky đều đạt.
+- Viewport CSS 288×512 / DPR 2.5 được xác nhận trên native X11 720×1280.
+  Bounding box glyph tiêu đề trong video tham chiếu: 544×64 px; hình native
+  bản mới: 542×65 px (sai khác raster/font nhỏ), thay cho chữ quá nhỏ của bản cũ.
+- Sáu trạng thái native trước ghi: intro, đầy đủ bước 1/3/4, đoạn dài nhân tạo,
+  tổng kết. Đã xem các ảnh; focus overflow = 0 ở cả sáu trạng thái. Kiểm thử
+  đoạn dài giữ font 100%, không ép toàn bộ đoạn vào khung bằng chữ nhỏ.
+- Một MP4 cuối đã chạy nguyên animation bài thật: **126.900 s, 3,807 frame**,
+  720×1280, H.264 / AAC-LC, 30 fps; hai track bằng thời lượng, full decode đạt.
+  FFmpeg drop=0, duplicate=0; rAF gap lớn nhất 83.4 ms; wall time 207.6 s trên
+  2 CPU / 4 GiB, sandbox bật, network none.
+- Waveform khớp đủ **18/18** clip cache; trôi tương đối cue tối đa 22.67 ms,
+  tail sau hết clip cuối 0.942 s. Tương quan toàn clip thấp nhất 0.769; không
+  coi audio capture/lossy AAC là byte-identical với cache gốc.
+- Mốc hình/tiếng cue đầu: 24.62 ms; mốc fade overlay cue cuối: −95.33 ms.
+  Đo từ pixel 30 fps và waveform, chịu transition của HTML. Giây typewriter
+  đầu có 24 frame thay đổi. Đã xem 14 khung tại 2–124 giây, gồm toàn bộ các
+  bước, popup và tổng kết. Không dùng metadata CFR để thay thế xem chuyển động.
+- Bộ theo dõi vùng đọc trong lượt animation thật báo max focus overflow = 0.
+  Tiêu đề giữ ở đầu vùng đọc; bước cũ cuộn khỏi board; dòng cuối của đoạn dài
+  vẫn nhìn thấy. Font emoji có trong image, tránh mất ký tự icon tổng kết.
+
+Đây là **một lượt xác minh bố cục cuối**, không ghi thành benchmark mới 3/3.
+Profile chỉ nhận diện cấu trúc container/board/step của bài này; không cam kết
+sửa mọi HTML tùy ý. Các class `vanish`/`collapse` do tác giả chủ động dùng vẫn
+được tôn trọng. Thân animation, cue, thời lượng và toàn bộ clip Kore không sửa;
+HTML đầu vào giữ nguyên SHA-256 đã ghi trên. Chưa tích hợp nút/API hoặc deploy.
 
 ## Bằng chứng và giới hạn phép đo
 
