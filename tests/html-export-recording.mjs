@@ -8,7 +8,7 @@ import { chromium } from '../render-worker/node_modules/playwright-core/index.mj
 
 const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js','--host','127.0.0.1','--port','4173','--strictPort'], { stdio:'ignore' });
 const output = path.resolve('render-worker/artifacts/html-recording'); await fs.mkdir(output,{recursive:true});
-let browser;
+let browser; let visibilityBrowser;
 function wav(seconds) {
   const b=Buffer.alloc(44+seconds*16000);b.write('RIFF');b.writeUInt32LE(b.length-8,4);b.write('WAVEfmt ',8);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(8000,24);b.writeUInt32LE(16000,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(b.length-44,40);
   for(let i=0;i<seconds*8000;i++)b.writeInt16LE(Math.round(Math.sin(.3+i*2*Math.PI*443.17/8000)*2000),44+i*2);return b.toString('base64');
@@ -17,11 +17,17 @@ const html='<!doctype html><html><head><title>Recording diagnostic</title></head
 
 try {
   let ready=false;for(let i=0;i<100;i++){try{ready=(await fetch('http://127.0.0.1:4173')).ok;}catch{}if(ready)break;await new Promise(r=>setTimeout(r,100));}assert.ok(ready);
-  browser=await chromium.launch({executablePath:process.env.CHROMIUM_BIN||'/usr/bin/google-chrome',headless:false,args:['--no-sandbox','--autoplay-policy=no-user-gesture-required']});
-  const context=await browser.newContext({viewport:{width:1000,height:900},acceptDownloads:true});let apiCalls=0;const errors=[];
-  await context.route('**/api/tts',route=>{apiCalls++;return route.abort();});
-  await context.route('**/test-recording-host',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>Host</title><p>Recording diagnostic host</p>'}));
-  context.on('page',p=>p.on('pageerror',e=>errors.push(e.message)));
+  browser=await chromium.launch({executablePath:process.env.CHROMIUM_BIN||'/usr/bin/google-chrome',headless:false,args:['--no-sandbox','--autoplay-policy=no-user-gesture-required','--remote-debugging-port=4175','--window-size=1000,1000']});
+  // Only a default context connected with noDefaults skips Playwright's own
+  // focus override. A second CDP session cannot undo another session's override.
+  visibilityBrowser=await chromium.connectOverCDP('http://127.0.0.1:4175',{noDefaults:true,isLocal:true});
+  let context=visibilityBrowser.contexts()[0];let apiCalls=0;const errors=[];
+  async function configure(ctx){
+    await ctx.route('**/api/tts',route=>{apiCalls++;return route.abort();});
+    await ctx.route('**/test-recording-host',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>Host</title><p>Recording diagnostic host</p>'}));
+    ctx.on('page',p=>p.on('pageerror',e=>errors.push(e.message)));
+  }
+  await configure(context);
 
   async function create(kind,seconds,webm=false){
     const host=await context.newPage();await host.goto('http://127.0.0.1:4173/test-recording-host');
@@ -41,12 +47,10 @@ try {
         localStorage.setItem('videoai2-html-export:'+id,JSON.stringify({rawHtml:html,fileName:'diagnostic.html'}));
       },{id,html,audioBase64,seconds});await host.goto('http://127.0.0.1:4173/?html-kore-export='+id);await host.getByText('Kore đã sẵn sàng. Bấm “Bắt đầu xuất video”.',{exact:true}).waitFor();
     }
-    // Playwright enables focus emulation for every target by default, making
-    // background tabs appear visible. Disable it to test real visibility events.
-    const cdp=await context.newCDPSession(page);
-    await cdp.send('Emulation.setFocusEmulationEnabled',{enabled:false});
     await page.bringToFront();
     await page.evaluate(webm=>{
+      window.__downloadClicks=0;const originalClick=HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click=function(){if(this.download)window.__downloadClicks++;return originalClick.apply(this,arguments);};
       navigator.mediaDevices.getDisplayMedia=async()=>{
         const canvas=document.createElement('canvas');canvas.width=innerWidth;canvas.height=innerHeight;const ctx=canvas.getContext('2d');let tick=0;
         const paint=()=>{ctx.fillStyle=tick++%48<24?'#2456ab':'#39aa65';ctx.fillRect(0,0,canvas.width,canvas.height);};paint();const timer=setInterval(paint,1000/24);const stream=canvas.captureStream(24);const track=stream.getVideoTracks()[0];track.addEventListener('ended',()=>clearInterval(timer));return stream;
@@ -62,11 +66,14 @@ try {
     const other=await context.newPage();await other.goto('about:blank');await other.bringToFront();
     console.log('Background tab state',kind,await page.evaluate(()=>({visibility:document.visibilityState,body:document.body.innerText})));
     await page.waitForFunction(()=>document.body.innerText.includes('Tab xuất đã bị ẩn'),null,{timeout:5000,polling:100}).catch(async e=>{console.error('Background UI at failure:',await page.locator('body').innerText());throw e;});
-    assert.equal(downloads,0);await other.close();await page.close();if(host!==page)await host.close();console.log('PASS: hidden '+kind+' recording discarded');
+    assert.equal(downloads,0);assert.equal(await page.evaluate(()=>window.__downloadClicks),0);await other.close();await page.close();if(host!==page)await host.close();console.log('PASS: hidden '+kind+' recording discarded');
   }
   const {page,host}=await create('standalone',20);let downloads=0;page.on('download',()=>downloads++);
   await page.getByRole('button',{name:'Bắt đầu xuất video 9:16',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#lesson')?.getAttribute('srcdoc')?.includes('narrationScript'));
-  await page.evaluate(()=>{window.requestAnimationFrame=()=>0;});await page.getByText(/Hình bị gián đoạn/).waitFor();assert.equal(downloads,0);await page.close();await host.close();
+  await page.evaluate(()=>{window.requestAnimationFrame=()=>0;});await page.getByText(/Hình bị gián đoạn/).waitFor();assert.equal(downloads,0);assert.equal(await page.evaluate(()=>window.__downloadClicks),0);await page.close();await host.close();
+  // Positive recordings use Playwright's ordinary download handling.
+  context=await browser.newContext({viewport:{width:1000,height:900},acceptDownloads:true});
+  await configure(context);
   const results=[];
   for(const [kind,seconds,webm] of [['normal',4,false],['standalone',4,false],['standalone',4,true],['standalone',120,false]]){
     const {page,host}=await create(kind,seconds,webm);const downloads=[];page.on('download',d=>downloads.push(d));
@@ -87,4 +94,4 @@ try {
     console.log('PASS: native recording',JSON.stringify(results.at(-1)));await page.close();if(host!==page)await host.close();
   }
   assert.equal(apiCalls,0);assert.deepEqual(errors,[]);await fs.writeFile(path.join(output,'results.json'),JSON.stringify({results,hidden:'PASS',stalled:'PASS',apiCalls},null,2));
-}finally{await browser?.close();server.kill();}
+}finally{await visibilityBrowser?.close();await browser?.close();server.kill();}
