@@ -1,3 +1,5 @@
+import { createHtmlExportGuard, readHtmlRecordingDurations, assertHtmlRecordingDurations } from './htmlExportSafety';
+
 export interface StandaloneHtmlExportCuePayload {
   id: string;
   narration: string;
@@ -156,6 +158,9 @@ export const writeStandaloneHtmlExportShell = (
   <script>
   (() => {
     const EXPORT_ID = ${safeExportId};
+    const createHtmlExportGuard = ${createHtmlExportGuard.toString()};
+    const readHtmlRecordingDurations = ${readHtmlRecordingDurations.toString()};
+    const assertHtmlRecordingDurations = ${assertHtmlRecordingDurations.toString()};
     const setup = document.getElementById('setup');
     const statusEl = document.getElementById('status');
     const errorEl = document.getElementById('error');
@@ -176,9 +181,11 @@ export const writeStandaloneHtmlExportShell = (
     let outputStream = null;
     let sourceVideo = null;
     let outputCanvas = null;
-    let videoFrameCallbackId = null;
-    let frameHeartbeatTimer = null;
-    let manualCanvasTrack = null;
+    let captureRaf = null;
+    let exportGuard = null;
+    let abortReason = '';
+    let keepAlive = null;
+    const activeAudioSources = new Set();
     let frameTick = 0;
     let regionCaptureActive = false;
     let playedCueCount = 0;
@@ -200,20 +207,19 @@ export const writeStandaloneHtmlExportShell = (
       setStatus('');
       if (setup) setup.style.display = 'flex';
       recordingView.classList.remove('active');
-      startButton.disabled = false;
+      startButton.disabled = Boolean(abortReason);
     };
 
     const cleanupCapture = () => {
-      if (videoFrameCallbackId != null && sourceVideo?.cancelVideoFrameCallback) {
-        try { sourceVideo.cancelVideoFrameCallback(videoFrameCallbackId); } catch {}
-        videoFrameCallbackId = null;
-      }
-      if (frameHeartbeatTimer != null) {
-        clearInterval(frameHeartbeatTimer);
-        frameHeartbeatTimer = null;
-      }
+      if (captureRaf != null) cancelAnimationFrame(captureRaf);
+      captureRaf = null;
+      exportGuard?.dispose();
+      exportGuard = null;
+      try { keepAlive?.stop(); } catch {}
+      keepAlive = null;
+      for (const source of activeAudioSources) { try { source.stop(); } catch {} }
+      activeAudioSources.clear();
       recordingReady = false;
-      manualCanvasTrack = null;
       regionCaptureActive = false;
       if (sourceVideo) {
         try { sourceVideo.pause(); } catch {}
@@ -233,6 +239,16 @@ export const writeStandaloneHtmlExportShell = (
 
     const stopRecorder = () => {
       if (recorder && recorder.state !== 'inactive') recorder.stop();
+    };
+
+    const abortExport = (reason) => {
+      if (abortReason) return;
+      abortReason = reason;
+      lesson.srcdoc = '';
+      stopRecorder();
+      cleanupCapture();
+      chunks = [];
+      showError(reason + ' Đóng tab này và bấm Xuất video lại từ bài giảng.');
     };
 
     const safeBaseName = (name) => {
@@ -280,8 +296,9 @@ export const writeStandaloneHtmlExportShell = (
       }
 
       await new Promise((resolve, reject) => {
-        source.onended = resolve;
+        source.onended = () => { activeAudioSources.delete(source); resolve(); };
         try {
+          activeAudioSources.add(source);
           source.start();
           playedCueCount++;
           if (peak > 0.002) audibleCueCount++;
@@ -322,6 +339,7 @@ export const writeStandaloneHtmlExportShell = (
       const messageSession = String(data.sessionId || '');
 
       const runCue = async () => {
+        if (abortReason) return;
         try {
           await playCue(cueId);
           lesson.contentWindow?.postMessage({
@@ -339,8 +357,7 @@ export const writeStandaloneHtmlExportShell = (
             ok: false,
             error: message
           }, '*');
-          showError(message);
-          stopRecorder();
+          abortExport(message);
         }
       };
 
@@ -403,32 +420,22 @@ export const writeStandaloneHtmlExportShell = (
           ctx.fillStyle = frameTick++ % 2 === 0 ? '#000000' : '#010101';
           ctx.fillRect(outputCanvas.width - 1, outputCanvas.height - 1, 1, 1);
 
-          if (manualCanvasTrack?.requestFrame) {
-            try { manualCanvasTrack.requestFrame(); } catch {}
-          }
         }
       };
 
-      const scheduleVideoFrame = () => {
-        if (!sourceVideo || !displayStream) return;
-        drawFrame();
-        if (sourceVideo.requestVideoFrameCallback) {
-          videoFrameCallbackId = sourceVideo.requestVideoFrameCallback(scheduleVideoFrame);
+      // rAF only paints the current image. Native captureStream timestamps use
+      // real elapsed time; there is no frame-count clock or timer heartbeat.
+      let lastPaint = -Infinity;
+      const paint = (now) => {
+        if (!sourceVideo || !displayStream || abortReason) return;
+        if (now - lastPaint >= 1000 / TARGET_FPS) {
+          exportGuard?.frame();
+          if (abortReason) return;
+          drawFrame(); lastPaint = now;
         }
+        captureRaf = requestAnimationFrame(paint);
       };
-
-      if (sourceVideo.requestVideoFrameCallback) {
-        videoFrameCallbackId = sourceVideo.requestVideoFrameCallback(scheduleVideoFrame);
-      } else {
-        frameHeartbeatTimer = setInterval(drawFrame, 1000 / TARGET_FPS);
-      }
-
-      // Heartbeat guarantees timestamps keep advancing even if the captured tab
-      // becomes visually static or the browser briefly throttles video callbacks.
-      if (frameHeartbeatTimer == null) {
-        frameHeartbeatTimer = setInterval(drawFrame, 250);
-      }
-
+      captureRaf = requestAnimationFrame(paint);
       drawFrame();
     };
 
@@ -475,7 +482,8 @@ export const writeStandaloneHtmlExportShell = (
     };
 
     startButton.addEventListener('click', async () => {
-      if (!payload || startButton.disabled) return;
+      if (!payload || startButton.disabled || abortReason) return;
+      if (document.visibilityState !== 'visible') { showError('Hãy mở tab xuất ở phía trước trước khi bắt đầu.'); return; }
       errorEl.style.display = 'none';
       startButton.disabled = true;
 
@@ -506,6 +514,9 @@ export const writeStandaloneHtmlExportShell = (
         }
 
         audioDestination = audioContext.createMediaStreamDestination();
+        // Keep silent output packets alive between cues and through the final hold.
+        keepAlive = audioContext.createConstantSource();
+        keepAlive.offset.value = 0; keepAlive.connect(audioDestination); keepAlive.start();
 
         setup.style.display = 'none';
         recordingView.classList.add('active');
@@ -535,8 +546,7 @@ export const writeStandaloneHtmlExportShell = (
         outputCanvas = document.createElement('canvas');
         outputCanvas.width = 720;
         outputCanvas.height = 1280;
-        const canvasStream = outputCanvas.captureStream(0);
-        manualCanvasTrack = canvasStream.getVideoTracks()[0] || null;
+        const canvasStream = outputCanvas.captureStream(TARGET_FPS);
 
         outputStream = new MediaStream([
           ...canvasStream.getVideoTracks(),
@@ -583,9 +593,10 @@ export const writeStandaloneHtmlExportShell = (
           if (event.data && event.data.size > 0) chunks.push(event.data);
         };
 
-        recorder.onerror = () => showError('Có lỗi khi mã hóa video.');
+        recorder.onerror = () => abortExport('Có lỗi khi mã hóa video.');
 
-        recorder.onstop = () => {
+        recorder.onstop = async () => {
+          const timing = exportGuard?.finish();
           recordingReady = false;
           lesson.srcdoc = '';
 
@@ -594,6 +605,9 @@ export const writeStandaloneHtmlExportShell = (
           const hadAudibleKore = playedCueCount > 0 && audibleCueCount > 0;
 
           cleanupCapture();
+
+          if (abortReason || timing?.failure) { chunks = []; showError(abortReason || timing.failure); return; }
+          if (!lessonCompleted) { abortExport('Bài giảng chưa hoàn tất. Đã hủy bản ghi dừng sớm.'); return; }
 
           if (chunks.length === 0) {
             showError('Không nhận được dữ liệu video để lưu.');
@@ -617,6 +631,12 @@ export const writeStandaloneHtmlExportShell = (
           const type = recorder.mimeType || mimeType || 'video/webm';
           const ext = type.includes('mp4') ? 'mp4' : 'webm';
           const blob = new Blob(chunks, { type });
+          chunks = [];
+          try {
+            setStatus('Đang kiểm tra thời lượng hình và tiếng...');
+            const durations = readHtmlRecordingDurations(await blob.arrayBuffer());
+            assertHtmlRecordingDurations(durations, timing?.elapsed || 0);
+          } catch (error) { abortExport(error?.message || 'Không kiểm tra được bản ghi.'); return; }
           const url = URL.createObjectURL(blob);
           const link = document.createElement('a');
           link.href = url;
@@ -641,10 +661,15 @@ export const writeStandaloneHtmlExportShell = (
           recordingReady = false;
 
           if (recorder && recorder.state === 'recording') {
-            recorder.stop();
+            if (captureEndedEarly) abortExport('Luồng chia sẻ đã dừng trước khi bài giảng hoàn tất.');
+            else recorder.stop();
           }
         });
 
+        if (document.visibilityState !== 'visible') throw new Error('Hãy giữ tab xuất ở phía trước.');
+        const maximumSeconds = [...decoded.values()].reduce((sum, clip) => sum + clip.duration, 0) / Number(payload.playbackRate || 1) + Math.max(20, payload.cues.length * 2);
+        exportGuard = createHtmlExportGuard(abortExport, () => audioContext.currentTime, maximumSeconds);
+        exportGuard.start();
         recorder.start(500);
         await new Promise((resolve) => setTimeout(resolve, 120));
 
@@ -652,10 +677,12 @@ export const writeStandaloneHtmlExportShell = (
           throw new Error('Bộ ghi chưa khởi động ổn định. Hãy bấm xuất lại.');
         }
 
+        if (abortReason) return;
         recordingReady = true;
 
         // Only start the HTML lesson after BOTH video and Kore mixer are ready.
         await new Promise((resolve) => setTimeout(resolve, 180));
+        if (abortReason) return;
         lesson.srcdoc = payload.runningHtml;
       } catch (err) {
         cleanupCapture();

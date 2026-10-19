@@ -7,7 +7,7 @@ permissions:
 jobs:
   entry:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,3 +26,16 @@ jobs:
         env:
           CHROMIUM_BIN: /usr/bin/google-chrome
         run: node tests/html-export-entry.mjs
+      - run: node --test tests/html-export-safety.test.mjs
+      - run: sudo apt-get update && sudo apt-get install -y xvfb ffmpeg
+      - name: Native recording timelines and background abort
+        env:
+          CHROMIUM_BIN: /usr/bin/google-chrome
+        run: xvfb-run -a node tests/html-export-recording.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: html-recording-diagnostics
+          path: render-worker/artifacts/html-recording/
+          retention-days: 1
+          if-no-files-found: ignore
