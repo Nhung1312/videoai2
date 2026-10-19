@@ -44,6 +44,37 @@ jobs:
           chmod -R a+rX "$RUNNER_TEMP/kore-private/package"
           mkdir -p "$RUNNER_TEMP/kore-output"
           chmod 0777 "$RUNNER_TEMP/kore-output"
+      - name: Native readable portrait test
+        run: |
+          docker run --rm \
+            --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --security-opt seccomp=unconfined \
+            --cpus 2 --memory 4g --pids-limit 512 --shm-size 512m \
+            --tmpfs /tmp:rw,nosuid,nodev,size=768m,uid=1001,gid=1001 \
+            --entrypoint node videoai2-render --test tests/browser/readable.test.mjs
+      - name: Native layout previews
+        run: |
+          docker run --rm \
+            --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --security-opt seccomp=unconfined \
+            --cpus 2 --memory 4g --pids-limit 512 --shm-size 512m \
+            --tmpfs /tmp:rw,nosuid,nodev,size=768m,uid=1001,gid=1001 \
+            --mount "type=bind,src=$RUNNER_TEMP/kore-private/package,dst=/input,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/kore-output,dst=/output" \
+            --entrypoint node videoai2-render scripts/readable-probe.mjs /input /output/probe
+      - name: Encrypt layout previews
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/kore-private/recipient.pem" && test -d "$RUNNER_TEMP/kore-output"; then
+            node render-worker/scripts/private-fixture.mjs seal "$RUNNER_TEMP/kore-private" "$RUNNER_TEMP/kore-output"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: encrypted-layout-preview
+          path: ${{ runner.temp }}/kore-private/sealed/
+          retention-days: 1
+          if-no-files-found: ignore
       - name: Three isolated renders with the Chromium sandbox enabled
         run: |
           failures=0

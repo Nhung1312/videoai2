@@ -138,7 +138,7 @@ export function installRunner(config) {
 
   const api = {
     wrapStart,
-    snapshot: () => ({ state, failure, queued, activeSources: sources.size, animationDone, maxRafGapMs, events: [...events], cueCounts: Object.fromEntries(counts), viewport: { width: innerWidth, height: innerHeight } }),
+    snapshot: () => ({ state, failure, queued, activeSources: sources.size, animationDone, maxRafGapMs, events: [...events], cueCounts: Object.fromEntries(counts), viewport: { width: innerWidth, height: innerHeight, deviceScaleFactor: devicePixelRatio, captureWidth: Math.round(innerWidth * devicePixelRatio), captureHeight: Math.round(innerHeight * devicePixelRatio) }, layout: window.__videoai2PortraitLayout?.snapshot() || null }),
     prepare: async () => {
       transition('LOADING');
       try {
@@ -151,7 +151,8 @@ export function installRunner(config) {
           if (img.decode && img.currentSrc) await img.decode();
         }
         await document.fonts?.ready;
-        if (innerWidth !== 720 || innerHeight !== 1280) throw new Error('Viewport thực tế không phải 720×1280.');
+        const viewport = config.viewport || { width: 720, height: 1280, deviceScaleFactor: 1 };
+        if (innerWidth !== viewport.width || innerHeight !== viewport.height || Math.abs(devicePixelRatio - viewport.deviceScaleFactor) > 0.01 || Math.round(innerWidth * devicePixelRatio) !== 720 || Math.round(innerHeight * devicePixelRatio) !== 1280) throw new Error('Viewport/DPR thực tế không khớp khung capture 720×1280.');
         if (!entry) throw new Error('Không tìm thấy entry startAnimation đã được bọc.');
         context = new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' });
         await context.resume();
