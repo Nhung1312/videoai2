@@ -34,6 +34,19 @@ try {
   const errors = [];
   context.on('page', page => page.on('pageerror', e => errors.push(e.message)));
   const page = await context.newPage();
+  await page.goto('http://127.0.0.1:4173/?html-kore-export=test-cache-bootstrap');
+  await page.evaluate(async ({ html, audioBase64 }) => {
+    const { AudioEngine } = await import('/src/lib/audioEngine.ts');
+    const { stableHtmlLessonId, normalizeHtmlNarration } = await import('/src/lib/htmlLessonBridge.ts');
+    const { saveStoredAudioClip } = await import('/src/lib/ttsStorage.ts');
+    const { getTtsProfile } = await import('/src/lib/ttsProfile.ts');
+    const { SAMPLE_GEOMETRY_LESSON } = await import('/src/lib/sampleLessons.ts');
+    // The unchanged main app preloads its current sample on mount. Seed that
+    // independent sample too, so no test action can spend a real TTS request.
+    const first = SAMPLE_GEOMETRY_LESSON.steps[0];
+    await saveStoredAudioClip({ cacheKey: AudioEngine.getCacheKey(first.id, first.narration, 'Kore'), audioBase64, mimeType: 'audio/wav', duration: 1, ttsProfile: getTtsProfile('Kore'), timestamp: Date.now() });
+    await saveStoredAudioClip({ cacheKey: AudioEngine.getCacheKey(stableHtmlLessonId(html) + ':intro', normalizeHtmlNarration('Kiểm tra giọng đã lưu.'), 'Kore'), audioBase64, mimeType: 'audio/wav', duration: 1, ttsProfile: getTtsProfile('Kore'), timestamp: Date.now() });
+  }, { html, audioBase64: wav.toString('base64') });
   await page.goto('http://127.0.0.1:4173/?entry-test=keep');
   await page.getByRole('button', { name: 'HTML + Kore', exact: true }).click();
   const entry = page.getByRole('button', { name: 'Xuất video 9:16', exact: true });
@@ -55,13 +68,6 @@ try {
   assert.equal(await page.evaluate(() => Object.keys(localStorage).filter(k => k.startsWith('videoai2-html-export:')).length), 0);
   await page.evaluate(() => { window.open = window.__open; });
 
-  await page.evaluate(async ({ html, audioBase64 }) => {
-    const { AudioEngine } = await import('/src/lib/audioEngine.ts');
-    const { stableHtmlLessonId, normalizeHtmlNarration } = await import('/src/lib/htmlLessonBridge.ts');
-    const { saveStoredAudioClip } = await import('/src/lib/ttsStorage.ts');
-    const { getTtsProfile } = await import('/src/lib/ttsProfile.ts');
-    await saveStoredAudioClip({ cacheKey: AudioEngine.getCacheKey(stableHtmlLessonId(html) + ':intro', normalizeHtmlNarration('Kiểm tra giọng đã lưu.'), 'Kore'), audioBase64, mimeType: 'audio/wav', duration: 1, ttsProfile: getTtsProfile('Kore'), timestamp: Date.now() });
-  }, { html, audioBase64: wav.toString('base64') });
   await page.getByRole('button', { name: 'Chuẩn bị Kore & Chạy', exact: true }).click();
   await page.getByTitle('HTML lesson preview with Kore narration').waitFor();
   await page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent.includes('Xuất video 9:16') && !b.disabled));
