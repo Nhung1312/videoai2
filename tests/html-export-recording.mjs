@@ -11,7 +11,7 @@ const output = path.resolve('render-worker/artifacts/html-recording'); await fs.
 let browser;
 function wav(seconds) {
   const b=Buffer.alloc(44+seconds*16000);b.write('RIFF');b.writeUInt32LE(b.length-8,4);b.write('WAVEfmt ',8);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(8000,24);b.writeUInt32LE(16000,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(b.length-44,40);
-  for(let i=0;i<seconds*8000;i++)b.writeInt16LE(Math.round(Math.sin(i*2*Math.PI*440/8000)*2000),44+i*2);return b.toString('base64');
+  for(let i=0;i<seconds*8000;i++)b.writeInt16LE(Math.round(Math.sin(.3+i*2*Math.PI*443.17/8000)*2000),44+i*2);return b.toString('base64');
 }
 const html='<!doctype html><html><head><title>Recording diagnostic</title></head><body><p id="value">Đang chạy</p><script>const narrationScript={"intro":"Kiểm tra âm thanh."};async function cue(id){await window.onNarrationCue(id);}async function startAnimation(){await cue("intro");document.getElementById("value").textContent="Hoàn tất";}window.addEventListener("load",()=>void startAnimation());</script></body></html>';
 
@@ -55,9 +55,9 @@ try {
   for(const [kind,seconds,webm] of [['normal',4,false],['standalone',4,false],['standalone',4,true],['standalone',120,false]]){
     const {page,host}=await create(kind,seconds,webm);const downloads=[];page.on('download',d=>downloads.push(d));
     const file=page.waitForEvent('download',{timeout:(seconds+35)*1000});
-    const failed=page.waitForFunction(()=>/Đã hủy|Thời lượng hình\/tiếng|không kiểm tra được|chuyển nền|chưa hoàn tất/i.test(document.body.innerText),null,{timeout:(seconds+35)*1000}).then(async()=>{throw Error(await page.locator('body').innerText());});
+    const failed=page.waitForFunction(()=>/Đã hủy|Thời lượng hình\/tiếng|không kiểm tra được|chuyển nền|chưa hoàn tất|Bản xuất chưa đủ|Không nhận được dữ liệu/i.test(document.body.innerText) || Boolean(document.querySelector('#error')?.textContent?.trim()),null,{timeout:(seconds+35)*1000}).then(async()=>{throw Error(await page.locator('body').innerText());});
     const wall=Date.now();await page.getByRole('button',{name:'Bắt đầu xuất video 9:16',exact:true}).click();
-    const download=await Promise.race([file,failed]);const out=path.join(output,kind+'-'+seconds+(webm?'-webm':'')+path.extname(download.suggestedFilename()));await download.saveAs(out);
+    const download=await Promise.race([file,failed]).catch(async e=>{console.error('Recording UI at failure:',await page.locator('body').innerText());throw e;});const out=path.join(output,kind+'-'+seconds+(webm?'-webm':'')+path.extname(download.suggestedFilename()));await download.saveAs(out);
     const probe=JSON.parse(execFileSync('ffprobe',['-v','error','-show_streams','-show_format','-of','json',out]));
     const v=probe.streams.find(s=>s.codec_type==='video'),a=probe.streams.find(s=>s.codec_type==='audio');assert.ok(v&&a);assert.equal(v.width,720);assert.equal(v.height,1280);
     // Live MediaRecorder WebM need not contain a container Duration element.
