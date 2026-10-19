@@ -75,7 +75,7 @@ try {
     await page.getByRole('button',{name:'Bắt đầu xuất video 9:16',exact:true}).click();
     await page.waitForFunction(()=>[...document.querySelectorAll('iframe')].some(f=>(f.getAttribute('srcdoc')||'').includes('narrationScript')));
     const other=await context.newPage();await other.goto('about:blank');await other.bringToFront();
-    await page.waitForFunction(()=>document.body.innerText.includes('Tab xuất đã bị ẩn'),null,{timeout:5000});
+    await page.waitForFunction(()=>document.body.innerText.includes('Tab xuất đã bị ẩn'),null,{timeout:5000,polling:100});
     assert.equal(downloads,0);await other.close();await page.close();if(host!==page)await host.close();console.log('PASS: hidden '+kind+' recording discarded');
   }
   const {page,host}=await create('standalone',20);let downloads=0;page.on('download',()=>downloads++);
