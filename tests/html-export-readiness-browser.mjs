@@ -94,8 +94,12 @@ try {
   const [blank] = await Promise.all([page.waitForEvent('popup'), embeddedVideo.click()]);
   assert.equal(blank.url(), 'about:blank');
   await blank.getByText('Đã nhận 1 đoạn Kore. Sẵn sàng xuất video.', { exact: true }).waitFor(); await blank.close();
-  const [embeddedDownload] = await Promise.all([page.waitForEvent('download'), app.getByRole('button', { name: 'Tải HTML + Kore để quay thủ công', exact: true }).click()]);
+  const escapedDownload = context.waitForEvent('page').then(popup => popup.waitForEvent('download'));
+  const [downloadWindow, embeddedDownload] = await Promise.all([page.waitForEvent('popup'), escapedDownload, app.getByRole('button', { name: 'Tải HTML + Kore để quay thủ công', exact: true }).click()]);
+  assert.equal(downloadWindow.url(), 'about:blank');
   assert.ok((await fs.readFile(await embeddedDownload.path(), 'utf8')).includes(audioBase64));
+  assert.ok(await downloadWindow.getByRole('link', { name: 'Tải HTML + Kore để quay thủ công', exact: true }).isVisible());
+  await downloadWindow.close();
   assert.deepEqual(requests, ['Lời được gọi.'], 'export, replay, skipped branch and unused declaration make no further TTS calls');
   assert.deepEqual(errors, []);
   console.log('PASS production: early/manual/video export readiness, actual cues only, cached replay, minified offline player, normal route and embedded about:blank; mocked TTS calls=1.');

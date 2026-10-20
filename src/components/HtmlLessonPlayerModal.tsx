@@ -387,6 +387,9 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
 
     const selectedCues = await readyExportCues();
     if (!selectedCues) return;
+    // A sandboxed preview may allow escaped popups but forbid downloads. The
+    // final download must originate from that top-level document, like video.
+    let downloadWindow: Window | null = null;
     setError(null);
     setRecordingStatus('Đang đóng gói HTML + Kore...');
 
@@ -404,6 +407,12 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
     };
 
     try {
+      if (needsStandaloneHtmlExport()) {
+        downloadWindow = window.open('about:blank', '_blank');
+        if (!downloadWindow) throw new Error('Trình duyệt đã chặn cửa sổ tải HTML. Hãy cho phép cửa sổ bật lên rồi bấm tải lại.');
+        downloadWindow.document.title = 'Tải HTML + Kore';
+        downloadWindow.document.body.textContent = 'Đang đóng gói HTML + Kore. Vui lòng giữ cửa sổ này mở.';
+      }
       const embeddedCues: Array<{
         id: string;
         mimeType: string;
@@ -448,7 +457,8 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
         type: 'text/html;charset=utf-8',
       });
       const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
+      const downloadDocument = downloadWindow?.document || document;
+      const link = downloadDocument.createElement('a');
 
       const baseName =
         (fileName || 'bai-giang')
@@ -458,16 +468,26 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
 
       link.href = url;
       link.download = `${baseName}-Kore-QUAY-THU-CONG.html`;
-      document.body.appendChild(link);
+      if (downloadWindow) {
+        downloadDocument.body.textContent = 'HTML + Kore đã sẵn sàng. Nếu chưa thấy file tải xuống, bấm liên kết bên dưới. ';
+        link.textContent = 'Tải HTML + Kore để quay thủ công';
+      }
+      downloadDocument.body.appendChild(link);
       link.click();
-      link.remove();
-
-      window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+      if (downloadWindow) {
+        downloadWindow.addEventListener('pagehide', () => URL.revokeObjectURL(url), { once: true });
+      } else {
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+      }
 
       setRecordingStatus(
-        'Đã tải HTML có sẵn tiếng Kore. Mở file đó → bật quay màn hình của bạn → bấm “Bắt đầu bài giảng có tiếng”.'
+        downloadWindow
+          ? 'HTML + Kore đã sẵn sàng trong cửa sổ tải. Nếu chưa thấy file, bấm liên kết tải trong cửa sổ đó.'
+          : 'Đã tải HTML có sẵn tiếng Kore. Mở file đó → bật quay màn hình của bạn → bấm “Bắt đầu bài giảng có tiếng”.'
       );
     } catch (err: any) {
+      downloadWindow?.close();
       setRecordingStatus('');
       setError(err?.message || 'Không đóng gói được HTML + Kore.');
     }
