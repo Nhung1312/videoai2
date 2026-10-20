@@ -28,7 +28,7 @@ try {
   let ready=false;for(let i=0;i<100;i++){try{ready=(await fetch('http://127.0.0.1:4173')).ok;}catch{}if(ready)break;await new Promise(r=>setTimeout(r,100));}assert.ok(ready);
   browser=await chromium.launch({executablePath:process.env.CHROMIUM_BIN||'/usr/bin/google-chrome',headless:true,args:['--no-sandbox','--autoplay-policy=no-user-gesture-required']});
   const context=await browser.newContext({acceptDownloads:true}); const errors=[];const requests=[];
-  context.on('page',page=>page.on('pageerror',e=>errors.push(e.message)));
+  context.on('page',page=>page.on('pageerror',e=>{errors.push(e.message);console.error('PAGE ERROR:',e.message);}));
   await context.route('**/api/tts',route=>{
     const request=route.request().postDataJSON();requests.push(request.text);
     return route.fulfill({json:{audioBase64,mimeType:'audio/wav',ttsProfile:request.ttsProfile}});
@@ -57,6 +57,7 @@ try {
   assert.ok(await popup.getByRole('button',{name:'Bắt đầu xuất video 9:16',exact:true}).isEnabled());await popup.close();
   await context.route('**/test-offline-cues',route=>route.fulfill({contentType:'text/html',body:offline}));
   const local=await context.newPage();await local.goto('http://127.0.0.1:4173/test-offline-cues');
+  await local.waitForFunction(()=>document.getElementById('videoai2-kore-start'),null,{timeout:5000}).catch(async e=>{console.error('Offline page at failure:',await local.locator('body').innerText(),'errors',errors);throw e;});
   await local.getByRole('button',{name:'Bắt đầu bài giảng có tiếng',exact:true}).click();
   await local.locator('#popup.show').waitFor();await local.waitForTimeout(250);
   assert.equal(await local.locator('#popup').evaluate(el=>getComputedStyle(el).visibility),'visible');
