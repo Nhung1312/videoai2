@@ -218,7 +218,8 @@ export function prepareHtmlLessonSync(html: string) {
   }
   let output = html;
   for (const edit of edits.sort((a, b) => b.at - a.at || b.end - a.end)) output = output.slice(0, edit.at) + edit.text + output.slice(edit.end);
-  const runtime = `<script data-videoai2-lesson-sync>(${installHtmlLessonSync.toString()})();<\/script>`;
+  // Keep charset within the HTML encoding prescan before the inline runtime.
+  const runtime = `<meta charset="utf-8"><script data-videoai2-lesson-sync>(${installHtmlLessonSync.toString()})();<\/script>`;
   const head = /<head\b[^>]*>/i.exec(output);
   const root = /<html\b[^>]*>/i.exec(output);
   const at = head ? head.index + head[0].length : root ? root.index + root[0].length : undefined;

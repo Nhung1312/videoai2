@@ -47,6 +47,8 @@ test('cleanup instrumentation preserves math/text and valid syntax, including ne
   });`);
   const transformed = prepareHtmlLessonSync(html);
   assert.equal(prepareHtmlLessonSync(transformed), transformed);
+  assert.ok(transformed.indexOf('<meta charset="utf-8">') < transformed.indexOf('<script data-videoai2-lesson-sync>'));
+  assert.ok(transformed.indexOf('<meta charset="utf-8">') < 1024);
   assert.ok(transformed.includes('x² + 2x = 3; AB ⟂ CD; 15 km.'));
   assert.ok(transformed.includes("const text='withCue(\"unused\")'"));
   for (const script of readLessonScripts(transformed)) assert.doesNotThrow(() => parse(script.source, { ecmaVersion: 'latest' }));
