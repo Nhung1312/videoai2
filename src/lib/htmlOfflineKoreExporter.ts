@@ -1,4 +1,4 @@
-import { prepareHtmlLessonSync } from './htmlLessonSync';
+import { prepareHtmlLessonSync } from './htmlLessonSync.ts';
 
 export interface EmbeddedKoreCue {
   id: string;

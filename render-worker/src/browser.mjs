@@ -1,5 +1,5 @@
 import { chromium } from 'playwright-core';
-import { injectHtmlRecordingLayout } from '../../src/lib/htmlLessonBridge.ts';
+import { injectHtmlRecordingLayout } from '../../src/lib/htmlRecordingLayout.ts';
 import { gateLessonHtml, BRIDGE_KEY } from './transform.mjs';
 import { runnerPrelude } from './runner.mjs';
 import { ORIGIN } from './package.mjs';

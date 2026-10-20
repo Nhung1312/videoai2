@@ -1,4 +1,4 @@
-import { lessonMemberName, readLessonScripts, walkLessonJs } from './htmlLessonSource';
+import { lessonMemberName, readLessonScripts, walkLessonJs } from './htmlLessonSource.ts';
 
 /** Self-contained: serialized into preview, both existing video exporters and
  * offline HTML. Completion comes from the real voice promise, never a timeout. */
@@ -9,7 +9,6 @@ export function installHtmlLessonSync() {
   let ready!: () => void;
   const readyGate = new Promise<void>(resolve => { ready = resolve; });
   const starts = new WeakMap<Function, Function>();
-  let animationScope: Promise<unknown>[] | undefined;
   const pending = new Set<Voice>();
   const deferred: Array<{ voices: Voice[]; target?: object; apply: () => unknown }> = [];
   const flush = () => {
@@ -80,23 +79,20 @@ export function installHtmlLessonSync() {
       starts.set(original, wrapped); starts.set(wrapped, wrapped);
       return wrapped;
     },
-    animation(original: any) {
-      if (typeof original !== 'function') return original;
-      const scope = animationScope;
-      return function(this: unknown, ...args: unknown[]) {
-        const result = Promise.resolve(Reflect.apply(original, this, args));
-        scope?.push(result);
-        return result;
+    async withCue(invoke: (scope: { animation: (original: any) => any }) => unknown) {
+      const animations: Promise<unknown>[] = [];
+      const scope = {
+        animation(original: any) {
+          if (typeof original !== 'function') return original;
+          return function(this: unknown, ...args: unknown[]) {
+            const result = Promise.resolve(Reflect.apply(original, this, args));
+            animations.push(result);
+            return result;
+          };
+        },
       };
-    },
-    async withCue(invoke: () => unknown) {
-      const scope: Promise<unknown>[] = [];
-      const previous = animationScope;
-      animationScope = scope;
-      let result: unknown;
-      try { result = invoke(); } finally { animationScope = previous; }
-      const value = await result;
-      await Promise.all(scope);
+      const value = await invoke(scope);
+      await Promise.all(animations);
       await whenIdle();
       return value;
     },
@@ -175,7 +171,12 @@ export function prepareHtmlLessonSync(html: string) {
   const methods = new Set(['add', 'remove', 'toggle', 'replace', 'setAttribute', 'removeAttribute', 'removeChild', 'replaceChildren', 'replaceWith', 'animate', 'setProperty', 'append', 'appendChild', 'prepend', 'insertBefore', 'insertAdjacentHTML', 'insertAdjacentElement', 'insertAdjacentText']);
   const properties = new Set(['display', 'visibility', 'opacity', 'height', 'width', 'maxHeight', 'maxWidth', 'transform', 'hidden', 'innerHTML', 'textContent', 'innerText', 'className', 'cssText', 'style']);
   const edits: Array<{ at: number; end: number; text: string }> = [];
-  for (const script of readLessonScripts(html)) {
+  const scripts = readLessonScripts(html);
+  const names = new Set<string>();
+  for (const script of scripts) walkLessonJs(script.ast, node => { if (node.type === 'Identifier') names.add(node.name); });
+  let scopeName = '__videoai2CueScope';
+  while (names.has(scopeName)) scopeName += '_';
+  for (const script of scripts) {
     for (const declaration of script.ast.body.filter((node: any) => node.type === 'FunctionDeclaration' && node.id?.name === 'startAnimation')) {
       const directives = script.ast.body.filter((node: any) => node.type === 'ExpressionStatement' && node.directive);
       const at = script.start + (directives[directives.length - 1]?.end || 0);
@@ -190,11 +191,11 @@ export function prepareHtmlLessonSync(html: string) {
       }
       if (node.type === 'CallExpression' && !node.optional && !node.callee.optional && !node.callee.object?.optional) {
         if (lessonMemberName(node.callee) === 'withCue') {
-          edits.push({ at: script.start + node.start, end: script.start + node.start, text: `${api}.withCue(async()=>(` });
+          edits.push({ at: script.start + node.start, end: script.start + node.start, text: `${api}.withCue(async(${scopeName})=>(` });
           edits.push({ at: script.start + node.end, end: script.start + node.end, text: '))' });
           const animation = node.arguments[1];
           if (animation && animation.type !== 'SpreadElement') {
-            edits.push({ at: script.start + animation.start, end: script.start + animation.start, text: `${api}.animation(` });
+            edits.push({ at: script.start + animation.start, end: script.start + animation.start, text: `${scopeName}.animation(` });
             edits.push({ at: script.start + animation.end, end: script.start + animation.end, text: ')' });
           }
         } else if (node.callee.type === 'MemberExpression' && methods.has(lessonMemberName(node.callee) || '')) {

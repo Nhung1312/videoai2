@@ -10,7 +10,7 @@ WORKDIR /app/render-worker
 COPY render-worker/package.json render-worker/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY --chown=renderer:renderer render-worker/ ./
-COPY --chown=renderer:renderer src/lib/htmlLessonBridge.ts /app/src/lib/htmlLessonBridge.ts
+COPY --chown=renderer:renderer src/lib/htmlRecordingLayout.ts /app/src/lib/htmlRecordingLayout.ts
 ENV CHROMIUM_BIN=/usr/bin/chromium
 USER renderer
 ENTRYPOINT ["dumb-init", "--", "node", "src/cli.mjs"]
