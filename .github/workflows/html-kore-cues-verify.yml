@@ -1,0 +1,39 @@
+name: HTML Kore cue synchronization verification
+on:
+  push:
+    branches: [codex/html-kore-cues-20261020]
+permissions:
+  contents: read
+jobs:
+  cues:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --legacy-peer-deps --no-audit --no-fund --package-lock=false
+      - run: npm run build
+      - run: npm run lint
+      - run: node --import tsx --test tests/html-lesson-sync.test.mjs
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: render-worker
+      - run: npm test
+        working-directory: render-worker
+      - name: Called cue quota and real voice-ended visual barriers
+        env:
+          CHROMIUM_BIN: /usr/bin/google-chrome
+        run: node tests/html-lesson-sync-browser.mjs
+      - name: Existing export entry and manual download regression
+        env:
+          CHROMIUM_BIN: /usr/bin/google-chrome
+        run: node tests/html-export-entry.mjs
+      - run: node --test tests/html-export-safety.test.mjs
+      - run: sudo apt-get update && sudo apt-get install -y xvfb ffmpeg
+      - name: Existing native recording timelines and background abort
+        env:
+          CHROMIUM_BIN: /usr/bin/google-chrome
+        run: xvfb-run -a node tests/html-export-recording.mjs

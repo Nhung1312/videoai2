@@ -1,3 +1,5 @@
+import { prepareHtmlLessonSync } from './htmlLessonSync';
+
 export interface EmbeddedKoreCue {
   id: string;
   mimeType: string;
@@ -21,6 +23,7 @@ export const buildOfflineKoreHtml = (
   cues: EmbeddedKoreCue[],
   playbackRate: number
 ): string => {
+  html = prepareHtmlLessonSync(html);
   const payload = inlineJson(cues);
   const rate = Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1;
 
@@ -157,18 +160,8 @@ export const buildOfflineKoreHtml = (
     });
   };
 
-  // Hold the lesson at startAnimation until the user explicitly starts. This
-  // lets the teacher start their own screen recorder first and also satisfies
-  // browser autoplay rules for Web Audio.
-  const originalStart = window.startAnimation;
-  if (typeof originalStart === 'function' && !originalStart.__videoai2OfflineWrapped) {
-    const wrappedStart = async function(...args) {
-      await startGate;
-      return originalStart.apply(this, args);
-    };
-    wrappedStart.__videoai2OfflineWrapped = true;
-    window.startAnimation = wrappedStart;
-  }
+  // The shared entry gate also supports lexical const/arrow entry functions.
+  window.__videoai2LessonSync.beforeStart = () => startGate;
 
   const installStartUi = () => {
     if (document.getElementById('videoai2-kore-start')) return;

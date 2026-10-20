@@ -1,3 +1,6 @@
+import { inspectHtmlLessonSource, readHtmlCueManifest, stripHtmlCueManifest } from './htmlLessonSource';
+import { prepareHtmlLessonSync } from './htmlLessonSync';
+
 export interface HtmlNarrationCue {
   id: string;
   narration: string;
@@ -8,95 +11,6 @@ export interface HtmlLessonValidation {
   cues: HtmlNarrationCue[];
   error?: string;
 }
-
-const findNarrationObjectLiteral = (html: string): string | null => {
-  const marker = /(?:const|let|var)\s+narrationScript\s*=\s*/g;
-  const match = marker.exec(html);
-  if (!match) return null;
-
-  let i = marker.lastIndex;
-  while (i < html.length && /\s/.test(html[i])) i++;
-  if (html[i] !== '{') return null;
-
-  const start = i;
-  let depth = 0;
-  let quote: '"' | "'" | '`' | null = null;
-  let escaped = false;
-
-  for (; i < html.length; i++) {
-    const ch = html[i];
-
-    if (quote) {
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (ch === '\\') {
-        escaped = true;
-        continue;
-      }
-      if (ch === quote) quote = null;
-      continue;
-    }
-
-    if (ch === '"' || ch === "'" || ch === '`') {
-      quote = ch;
-      continue;
-    }
-
-    if (ch === '{') depth++;
-    if (ch === '}') {
-      depth--;
-      if (depth === 0) return html.slice(start, i + 1);
-    }
-  }
-
-  return null;
-};
-
-const decodeQuotedString = (raw: string): string => {
-  const quote = raw[0];
-  const body = raw.slice(1, -1);
-
-  if (quote === '"') {
-    try {
-      return JSON.parse(raw);
-    } catch {
-      // Fall through to conservative unescape.
-    }
-  }
-
-  return body
-    .replace(/\\n/g, '\n')
-    .replace(/\\r/g, '\r')
-    .replace(/\\t/g, '\t')
-    .replace(/\\([\\'"`])/g, '$1');
-};
-
-const parseNarrationObject = (literal: string): HtmlNarrationCue[] => {
-  try {
-    const parsed = JSON.parse(literal) as Record<string, unknown>;
-    return Object.entries(parsed)
-      .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-      .map(([id, narration]) => ({ id, narration: narration.trim() }))
-      .filter((cue) => cue.id && cue.narration);
-  } catch {
-    // Gemini may use single quotes. Never eval HTML; parse only flat string:string pairs.
-  }
-
-  const cues: HtmlNarrationCue[] = [];
-  const pairRegex =
-    /(["'])(.*?)\1\s*:\s*((?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'))\s*(?:,|$)/gs;
-
-  let match: RegExpExecArray | null;
-  while ((match = pairRegex.exec(literal))) {
-    const id = match[2].trim();
-    const narration = decodeQuotedString(match[3]).trim();
-    if (id && narration) cues.push({ id, narration });
-  }
-
-  return cues;
-};
 
 export const validateHtmlLesson = (html: string): HtmlLessonValidation => {
   if (!html.trim()) {
@@ -111,31 +25,19 @@ export const validateHtmlLesson = (html: string): HtmlLessonValidation => {
     };
   }
 
-  const literal = findNarrationObjectLiteral(html);
-  if (!literal) {
-    return {
-      success: false,
-      cues: [],
-      error: 'Không tìm thấy object narrationScript trong HTML.',
-    };
+  let inspection: ReturnType<typeof inspectHtmlLessonSource>;
+  let manifest: string[] | null;
+  try {
+    inspection = inspectHtmlLessonSource(html);
+    manifest = readHtmlCueManifest(html);
+  } catch (error: any) {
+    return { success: false, cues: [], error: error?.message || 'Không đọc được JavaScript của bài giảng.' };
   }
-
-  const cues = parseNarrationObject(literal);
-  if (cues.length === 0) {
-    return {
-      success: false,
-      cues: [],
-      error: 'Có narrationScript nhưng chưa đọc được cue lời thoại nào.',
-    };
-  }
-
-  if (!/\bcue\s*\(/.test(html)) {
-    return {
-      success: false,
-      cues,
-      error: 'HTML có narrationScript nhưng chưa có các mốc cue(...) trong animation.',
-    };
-  }
+  if (!inspection.declared.length) return { success: false, cues: [], error: 'Không đọc được object narrationScript tĩnh trong HTML.' };
+  if (!inspection.hasCueCalls) return { success: false, cues: [], error: 'HTML chưa gọi cue(...) hoặc withCue(...) trong animation.' };
+  const ids = manifest ? new Set(manifest) : inspection.dynamic ? null : inspection.referenced;
+  const cues = inspection.declared.filter(cue => !ids || ids.has(cue.id));
+  if (!cues.length) return { success: false, cues: [], error: 'Animation chưa gọi cue lời đọc nào đã khai báo.' };
 
   return { success: true, cues };
 };
@@ -172,8 +74,9 @@ export const normalizeHtmlNarration = (text: string): string =>
 
 export const stableHtmlLessonId = (html: string): string => {
   let hash = 2166136261;
-  for (let i = 0; i < html.length; i++) {
-    hash ^= html.charCodeAt(i);
+  const source = stripHtmlCueManifest(html);
+  for (let i = 0; i < source.length; i++) {
+    hash ^= source.charCodeAt(i);
     hash = Math.imul(hash, 16777619);
   }
   return `html-${(hash >>> 0).toString(36)}`;
@@ -186,6 +89,7 @@ export const injectHtmlNarrationBridge = (
   sessionId: string,
   lessonId: string
 ): string => {
+  html = prepareHtmlLessonSync(html);
   const bridge = `
 <script data-videoai2-narration-bridge>
 (() => {
@@ -199,6 +103,7 @@ export const injectHtmlNarrationBridge = (
 
       const onMessage = (event) => {
         const data = event.data || {};
+        if (event.source !== window.parent) return;
         if (
           data.source !== 'videoai2-html-host' ||
           data.sessionId !== SESSION_ID ||
@@ -226,27 +131,15 @@ export const injectHtmlNarrationBridge = (
     });
   };
 
-  const originalStart = window.startAnimation;
-  if (typeof originalStart === 'function' && !originalStart.__videoai2Wrapped) {
-    const wrappedStart = async function(...args) {
-      try {
-        return await originalStart.apply(this, args);
-      } finally {
-        window.parent.postMessage(
-          {
-            source: 'videoai2-html-lesson',
-            type: 'lesson-complete',
-            sessionId: SESSION_ID,
-            lessonId: LESSON_ID
-          },
-          '*'
-        );
-      }
-    };
+  window.__videoai2LessonSync.onComplete = () => {
+    window.parent.postMessage({
+      source: 'videoai2-html-lesson',
+      type: 'lesson-complete',
+      sessionId: SESSION_ID,
+      lessonId: LESSON_ID
+    }, '*');
+  };
 
-    wrappedStart.__videoai2Wrapped = true;
-    window.startAnimation = wrappedStart;
-  }
 })();
 <\/script>
 `;
