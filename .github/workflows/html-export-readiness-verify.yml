@@ -1,0 +1,27 @@
+name: HTML export readiness verification
+on:
+  push:
+    branches: [codex/html-export-readiness-20261020]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CHROMIUM_BIN: /usr/bin/google-chrome
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --legacy-peer-deps --package-lock=false --no-audit --no-fund
+      - run: npm ci --prefix render-worker --ignore-scripts --no-audit --no-fund
+      - run: npm run lint && npm run build
+      - run: node --test tests/html-lesson-sync.test.mjs tests/html-export-safety.test.mjs
+      - run: npm test --prefix render-worker
+      - run: node --import tsx tests/html-export-readiness-browser.mjs
+      - run: node tests/html-lesson-sync-browser.mjs
+      - run: node tests/html-export-entry.mjs
+      - run: sudo apt-get update && sudo apt-get install -y xvfb ffmpeg
+      - run: xvfb-run -a node tests/html-export-recording.mjs

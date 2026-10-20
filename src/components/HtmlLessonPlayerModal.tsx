@@ -61,7 +61,6 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
   const declaredCues = useMemo(() => {
     try { return inspectHtmlLessonSource(rawHtml).declared; } catch { return []; }
   }, [rawHtml]);
-  const exportCues = () => completedCuesRef.current || [...new Map([...cues, ...calledCuesRef.current.values()].map(cue => [cue.id, cue])).values()];
 
   const stopActiveAudio = () => {
     try {
@@ -129,8 +128,23 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
 
       if (data.type === 'lesson-complete') {
         if (runFailedRef.current) return;
+        if (!calledCuesRef.current.size) {
+          runFailedRef.current = true;
+          setError('Animation đã kết thúc nhưng chưa gọi lời đọc Kore nào. Kiểm tra cue()/withCue() trong HTML.');
+          return;
+        }
         completedCuesRef.current = [...calledCuesRef.current.values()];
         setStatus('Bài giảng HTML + Kore đã chạy xong. Đã cache ' + completedCuesRef.current.length + ' cue thực sự được gọi.');
+        setRecordingStatus('Kore đã chuẩn bị xong. Bấm “Xuất video 9:16” hoặc “Tải HTML + Kore để quay thủ công”.');
+        return;
+      }
+
+      if (data.type === 'lesson-error') {
+        runFailedRef.current = true;
+        completedCuesRef.current = null;
+        stopActiveAudio();
+        setError('HTML bài giảng gặp lỗi: ' + String(data.error || 'Không chạy được animation.'));
+        setRecordingStatus('Bài chưa chạy hoàn tất nên chưa thể xuất đủ hình và tiếng.');
         return;
       }
 
@@ -293,10 +307,26 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
     setStatus('Đang chạy lại bài với giọng Kore đã cache...');
   };
 
+  // A declaration (including a skipped branch/dynamic ID) is not evidence that
+  // a cue ran. Both export paths must use the same completed runtime trace.
+  // Keep preparation in this tab: opening a popup first backgrounds the lesson
+  // and throttles its animation timers in Chromium.
+  const readyExportCues = async () => {
+    if (completedCuesRef.current?.length && !runFailedRef.current) return completedCuesRef.current;
+    if (runningHtml && !runFailedRef.current) {
+      setRecordingStatus('Bài đang chuẩn bị/chạy Kore. Chờ bài chạy xong rồi bấm nút xuất lại; không cần chạy lại từ đầu.');
+    } else {
+      setRecordingStatus('Đang chuẩn bị Kore cho các cue thực sự chạy. Chờ bài chạy xong rồi bấm nút xuất lại.');
+      await prepareAndRun();
+    }
+    return null;
+  };
+
   const openVideoExport = async () => {
     if (!rawHtml || cues.length === 0 || isPreparing || isOpeningExport) return;
 
-    const selectedCues = exportCues();
+    const selectedCues = await readyExportCues();
+    if (!selectedCues) return;
     const exportId = makeSessionId();
     const storageKey = `videoai2-html-export:${exportId}`;
 
@@ -326,7 +356,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
         });
       } else {
         localStorage.setItem(storageKey, JSON.stringify({
-          rawHtml: completedCuesRef.current ? withHtmlCueManifest(rawHtml, selectedCues.map(cue => cue.id)) : rawHtml,
+          rawHtml: withHtmlCueManifest(rawHtml, selectedCues.map(cue => cue.id)),
           fileName,
           createdAt: Date.now(),
         }));
@@ -355,9 +385,10 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
   const startHtmlRecording = async () => {
     if (!rawHtml || cues.length === 0 || !lessonId || isPreparing) return;
 
+    const selectedCues = await readyExportCues();
+    if (!selectedCues) return;
     setError(null);
     setRecordingStatus('Đang đóng gói HTML + Kore...');
-    const selectedCues = exportCues();
 
     const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
       const bytes = new Uint8Array(buffer);
@@ -516,7 +547,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
 
             <button
               onClick={prepareAndRun}
-              disabled={!rawHtml || cues.length === 0 || Boolean(error) || isPreparing}
+              disabled={!rawHtml || cues.length === 0 || isPreparing || isOpeningExport}
               className="w-full px-4 py-2.5 rounded-xl font-bold text-xs bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white flex items-center justify-center gap-2 cursor-pointer"
             >
               {isPreparing ? (
@@ -546,7 +577,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
             </button>
 
             <div className="text-[11px] leading-relaxed text-slate-400">
-              Bấm “Chuẩn bị Kore & Chạy”, chờ bài chạy xong rồi xuất bằng giọng đã cache. Cue không được gọi sẽ không tạo TTS.
+              Nếu chưa chuẩn bị, bấm nút xuất sẽ bắt đầu chạy Kore ngay tại đây. Chờ bài chạy xong rồi bấm xuất lại. Nếu bài đã chạy xong thì xuất ngay bằng cache; cue không được gọi sẽ không tạo TTS.
             </div>
 
             <button

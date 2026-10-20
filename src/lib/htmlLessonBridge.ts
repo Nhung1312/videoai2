@@ -140,6 +140,15 @@ export const injectHtmlNarrationBridge = (
       lessonId: LESSON_ID
     }, '*');
   };
+  const reportError = (error) => {
+    window.parent.postMessage({
+      source: 'videoai2-html-lesson', type: 'lesson-error',
+      sessionId: SESSION_ID, lessonId: LESSON_ID,
+      error: String(error?.message || error || 'Không chạy được animation.')
+    }, '*');
+  };
+  window.addEventListener('error', event => { if (event.message) reportError(event.error || event.message); });
+  window.addEventListener('unhandledrejection', event => reportError(event.reason));
 
 })();
 <\/script>

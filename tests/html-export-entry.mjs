@@ -30,7 +30,7 @@ try {
   browser = await chromium.launch({ executablePath: process.env.CHROMIUM_BIN || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
   const context = await browser.newContext({ acceptDownloads: true });
   let apiCalls = 0;
-  await context.route('**/api/tts', route => { apiCalls++; return route.abort(); });
+  await context.route('**/api/tts', route => { apiCalls++; return route.fulfill({json:{audioBase64:wav.toString('base64'),mimeType:'audio/wav',ttsProfile:route.request().postDataJSON().ttsProfile}}); });
   const errors = [];
   context.on('page', page => page.on('pageerror', e => errors.push(e.message)));
   const page = await context.newPage();
@@ -56,6 +56,9 @@ try {
   await page.getByText('Đã nhận 1 cue lời đọc.', { exact: true }).waitFor();
   assert.ok(await entry.isEnabled()); assert.ok(await manual.isEnabled());
 
+  await page.getByRole('button', { name: 'Chuẩn bị Kore & Chạy', exact: true }).click();
+  await page.getByText(/Đã cache 1 cue thực sự được gọi/).waitFor();
+
   await page.evaluate(() => {
     window.__open = window.open; window.__set = Storage.prototype.setItem;
     window.__openCalls = 0; window.open = () => { window.__openCalls++; return null; };
@@ -70,6 +73,7 @@ try {
 
   await page.getByRole('button', { name: 'Chuẩn bị Kore & Chạy', exact: true }).click();
   await page.getByTitle('HTML lesson preview with Kore narration').waitFor();
+  await page.getByText(/Đã cache 1 cue thực sự được gọi/).waitFor();
   await page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent.includes('Xuất video 9:16') && !b.disabled));
   const [popup] = await Promise.all([page.waitForEvent('popup'), entry.click()]);
   await popup.getByRole('heading', { name: 'Xuất video HTML + Kore', exact: true }).waitFor();
@@ -77,7 +81,7 @@ try {
   assert.ok(await popup.getByRole('button', { name: 'Bắt đầu xuất video 9:16', exact: true }).isEnabled());
   const url = new URL(popup.url()); assert.equal(url.searchParams.get('entry-test'), 'keep');
   const payload = await popup.evaluate(id => JSON.parse(localStorage.getItem('videoai2-html-export:' + id)), url.searchParams.get('html-kore-export'));
-  assert.equal(payload.rawHtml, html); assert.equal(payload.fileName, 'lesson-test.html'); assert.ok(payload.createdAt > 0);
+  assert.ok(payload.rawHtml.startsWith(html)); assert.equal(payload.fileName, 'lesson-test.html'); assert.ok(payload.createdAt > 0);
   assert.equal(await page.getByTitle('HTML lesson preview with Kore narration').count(), 0);
   assert.ok(await manual.isEnabled()); await popup.close();
 
@@ -91,8 +95,9 @@ try {
   await page.locator('input[type=file][accept*=".html"]').setInputFiles({ name: 'unprepared.html', mimeType: 'text/html', buffer: Buffer.from(missingHtml) });
   await page.getByText('unprepared.html', { exact: true }).waitFor();
   await page.getByText('Đã nhận HTML hợp lệ: 1 đoạn lời đọc.', { exact: true }).waitFor();
-  const [missing] = await Promise.all([page.waitForEvent('popup'), entry.click()]);
-  await missing.getByText(/Chưa tìm thấy Kore trong cache/).waitFor(); await missing.close();
+  await entry.click();
+  await page.getByText(/Đã cache 1 cue thực sự được gọi/).waitFor();
+  assert.equal(apiCalls, 1, 'unprepared export prepares the actual cue instead of opening a broken popup');
 
   // Reproduce an embedded preview: its URL must never be opened as a top-level
   // page. The existing about:blank shell receives audio bytes without storage.
@@ -117,6 +122,8 @@ try {
     };
     Storage.prototype.setItem = () => { throw new DOMException('Preview storage blocked', 'SecurityError'); };
   });
+  await preview.getByRole('button', { name: 'Chuẩn bị Kore & Chạy', exact: true }).click();
+  await preview.getByText(/Đã cache 1 cue thực sự được gọi/).waitFor();
   const embeddedEntry = preview.getByRole('button', { name: 'Xuất video 9:16', exact: true });
   const [blank] = await Promise.all([page.waitForEvent('popup'), embeddedEntry.click()]);
   await blank.getByText('Đã nhận 1 đoạn Kore. Sẵn sàng xuất video.', { exact: true }).waitFor();
@@ -128,8 +135,8 @@ try {
   assert.deepEqual(Buffer.from(handoff.audio), wav); await blank.close();
   await preview.locator('input[type=file][accept*=".html"]').setInputFiles({ name: 'unprepared.html', mimeType: 'text/html', buffer: Buffer.from(missingHtml) });
   await preview.getByText('Đã nhận HTML hợp lệ: 1 đoạn lời đọc.', { exact: true }).waitFor();
-  await embeddedEntry.click(); await preview.getByText(/Chưa tìm thấy Kore trong cache/).waitFor();
+  await embeddedEntry.click(); await preview.getByText(/Đã cache 1 cue thực sự được gọi/).waitFor();
   assert.ok(await preview.getByRole('button', { name: 'Chuẩn bị Kore & Chạy', exact: true }).isEnabled());
-  assert.equal(apiCalls, 0); assert.deepEqual(errors, []);
-  console.log('PASS: normal export route, embedded preview about:blank handoff, exact cached audio, storage/popup errors, manual HTML download, missing cache; TTS API calls=0.');
+  assert.equal(apiCalls, 1); assert.deepEqual(errors, []);
+  console.log('PASS: normal export route, embedded preview about:blank handoff, exact cached audio, storage/popup errors, manual HTML download, automatic preparation of uncached actual cues; mocked TTS calls=1.');
 } finally { await browser?.close(); server.kill(); }
