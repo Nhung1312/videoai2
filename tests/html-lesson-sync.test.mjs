@@ -74,6 +74,12 @@ test('scoped eager entries and mutation statements preserve syntax and lexical s
   for (const script of readLessonScripts(transformed)) assert.doesNotThrow(() => parse(script.source, { ecmaVersion: 'latest' }));
 });
 
+test('adjacent cleanup and rebuild operations remain valid after instrumentation', () => {
+  const html = lesson(`await withCue('used',async()=>{const el=document.getElementById('v');el.innerHTML='';el.append('Kết quả');el.classList.remove('show')});`);
+  const transformed = prepareHtmlLessonSync(html);
+  for (const script of readLessonScripts(transformed)) assert.doesNotThrow(() => parse(script.source, { ecmaVersion: 'latest' }));
+});
+
 test('preview/video bridge and manual HTML share the same synchronization runtime', () => {
   const html = lesson("await cue('used');");
   for (const output of [injectHtmlNarrationBridge(html, 'session', 'lesson'), buildOfflineKoreHtml(html, [{ id:'used',mimeType:'audio/wav',audioBase64:'fixture' }], 1)]) {

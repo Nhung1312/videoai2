@@ -231,7 +231,7 @@ export function prepareHtmlLessonSync(html: string) {
         // Only yield when a cleanup really was held; initial scene setup stays
         // synchronous and an authored exit sleep starts after audio, not before.
         edits.push({ at: script.start + parent.start, end: script.start + parent.start, priority: -1, text: `{const ${scopeName}Wait=${api}.capture(()=>{` });
-        edits.push({ at: script.start + parent.end, end: script.start + parent.end, text: `});if(${scopeName}Wait)await ${scopeName}Wait;}` });
+        edits.push({ at: script.start + parent.end, end: script.start + parent.end, priority: -10, text: `});if(${scopeName}Wait)await ${scopeName}Wait;}` });
       }
       const isEntryReference = node.type === 'Identifier' && node.name === 'startAnimation' &&
         !(parent?.type === 'FunctionDeclaration' && parent.id === node) &&
@@ -244,19 +244,19 @@ export function prepareHtmlLessonSync(html: string) {
           !(parent?.type === 'AssignmentExpression' && parent.left === node);
       if (isEntryReference) {
         edits.push({ at: script.start + node.start, end: script.start + node.start, text: `${api}.wrapStart(` });
-        edits.push({ at: script.start + node.end, end: script.start + node.end, text: ')' });
+        edits.push({ at: script.start + node.end, end: script.start + node.end, priority: -20, text: ')' });
       }
       if (node.type === 'CallExpression' && !node.optional && !node.callee.optional && !node.callee.object?.optional) {
         if (node.callee.type === 'Identifier' && lessonMemberName(node.callee) === 'onNarrationCue') {
           edits.push({ at: script.start + node.start, end: script.start + node.start, text: `${api}.narration(async()=>(` });
-          edits.push({ at: script.start + node.end, end: script.start + node.end, text: '))' });
+          edits.push({ at: script.start + node.end, end: script.start + node.end, priority: -20, text: '))' });
         } else if (lessonMemberName(node.callee) === 'withCue') {
           edits.push({ at: script.start + node.start, end: script.start + node.start, text: `${api}.withCue(async(${scopeName})=>(` });
-          edits.push({ at: script.start + node.end, end: script.start + node.end, text: '))' });
+          edits.push({ at: script.start + node.end, end: script.start + node.end, priority: -20, text: '))' });
           const animation = node.arguments[1];
           if (animation && animation.type !== 'SpreadElement') {
             edits.push({ at: script.start + animation.start, end: script.start + animation.start, text: `${scopeName}.animation(` });
-            edits.push({ at: script.start + animation.end, end: script.start + animation.end, text: ')' });
+            edits.push({ at: script.start + animation.end, end: script.start + animation.end, priority: -20, text: ')' });
           }
         } else if (node.callee.type === 'MemberExpression' && methods.has(lessonMemberName(node.callee) || '')) {
           const object = node.callee.object;
@@ -272,12 +272,12 @@ export function prepareHtmlLessonSync(html: string) {
         const object = node.left.object;
         edits.push({ at: script.start + node.start, end: script.start + object.start, text: `${api}.assign(` });
         edits.push({ at: script.start + object.end, end: script.start + node.right.start, text: `,${JSON.stringify(name)},` });
-        edits.push({ at: script.start + node.end, end: script.start + node.end, text: ')' });
+        edits.push({ at: script.start + node.end, end: script.start + node.end, priority: -20, text: ')' });
       }
     });
   }
   let output = html;
-  for (const edit of edits.sort((a, b) => b.at - a.at || b.end - a.end || (b.priority || 0) - (a.priority || 0))) output = output.slice(0, edit.at) + edit.text + output.slice(edit.end);
+  for (const edit of edits.sort((a, b) => b.at - a.at || b.end - a.end || (b.priority ?? 10) - (a.priority ?? 10))) output = output.slice(0, edit.at) + edit.text + output.slice(edit.end);
   // Keep charset within the HTML encoding prescan before the inline runtime.
   const runtime = `<meta charset="utf-8"><script data-videoai2-lesson-sync>(${installHtmlLessonSync.toString()})();<\/script>`;
   const head = /<head\b[^>]*>/i.exec(output);
