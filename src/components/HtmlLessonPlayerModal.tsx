@@ -142,6 +142,8 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       if (data.type === 'lesson-error') {
         runFailedRef.current = true;
         completedCuesRef.current = null;
+        activeSessionRef.current = '';
+        narrationQueueRef.current = Promise.resolve();
         stopActiveAudio();
         setError('HTML bài giảng gặp lỗi: ' + String(data.error || 'Không chạy được animation.'));
         setRecordingStatus('Bài chưa chạy hoàn tất nên chưa thể xuất đủ hình và tiếng.');
@@ -358,6 +360,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
         localStorage.setItem(storageKey, JSON.stringify({
           rawHtml: withHtmlCueManifest(rawHtml, selectedCues.map(cue => cue.id)),
           fileName,
+          voiceSpeed: AudioEngine.settings.voiceSpeed,
           createdAt: Date.now(),
         }));
         const exportUrl = new URL(window.location.href);

@@ -102,5 +102,13 @@ try {
   await downloadWindow.close();
   assert.deepEqual(requests, ['Lời được gọi.'], 'export, replay, skipped branch and unused declaration make no further TTS calls');
   assert.deepEqual(errors, []);
+  const broken = html.replace('async function startAnimation(){', "async function startAnimation(){throw new Error('Synthetic animation failure');");
+  await app.locator('input[type=file][accept*=".html"]').setInputFiles({ name: 'broken.html', mimeType: 'text/html', buffer: Buffer.from(broken) });
+  await app.getByRole('button', { name: 'Tải HTML + Kore để quay thủ công', exact: true }).click();
+  await app.getByText('HTML bài giảng gặp lỗi: Synthetic animation failure', { exact: true }).waitFor();
+  assert.ok(await app.getByRole('button', { name: 'Chuẩn bị Kore & Chạy', exact: true }).isEnabled(), 'a script failure must not disable retry');
+  assert.equal(context.pages().length, 1, 'failed lesson never opens a download/export window');
+  assert.deepEqual(requests, ['Lời được gọi.']);
+  assert.deepEqual(errors, ['Synthetic animation failure']);
   console.log('PASS production: early/manual/video export readiness, actual cues only, cached replay, minified offline player, normal route and embedded about:blank; mocked TTS calls=1.');
 } finally { await browser?.close(); server.kill(); }
