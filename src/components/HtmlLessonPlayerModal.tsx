@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import { AudioEngine } from '../lib/audioEngine';
+import { inspectHtmlLessonSource, withHtmlCueManifest } from '../lib/htmlLessonSource';
 import { buildOfflineKoreHtml } from '../lib/htmlOfflineKoreExporter';
 import { needsStandaloneHtmlExport, openStandaloneHtmlExport } from '../lib/htmlExportWindowLauncher';
 import type { StandaloneHtmlExportCuePayload } from '../lib/htmlStandaloneExporter';
@@ -40,6 +41,9 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
   const activeSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const activeSessionRef = useRef('');
   const narrationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const calledCuesRef = useRef<Map<string, HtmlNarrationCue>>(new Map());
+  const completedCuesRef = useRef<HtmlNarrationCue[] | null>(null);
+  const runFailedRef = useRef(false);
 
   const [fileName, setFileName] = useState<string | null>(null);
   const [rawHtml, setRawHtml] = useState('');
@@ -54,6 +58,10 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
   const [isOpeningExport, setIsOpeningExport] = useState(false);
 
   const lessonId = useMemo(() => (rawHtml ? stableHtmlLessonId(rawHtml) : ''), [rawHtml]);
+  const declaredCues = useMemo(() => {
+    try { return inspectHtmlLessonSource(rawHtml).declared; } catch { return []; }
+  }, [rawHtml]);
+  const exportCues = () => completedCuesRef.current || [...new Map([...cues, ...calledCuesRef.current.values()].map(cue => [cue.id, cue])).values()];
 
   const stopActiveAudio = () => {
     try {
@@ -74,7 +82,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
     return audioContextRef.current;
   };
 
-  const playCachedCue = async (stepId: string, narration: string) => {
+  const playCachedCue = async (stepId: string, narration: string, expectedSession: string) => {
     let cached = AudioEngine.getCachedAudio(stepId, narration, 'Kore');
     if (!cached) {
       cached = await AudioEngine.loadStepAudio(stepId, narration, 'Kore');
@@ -83,8 +91,10 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       throw new Error(AudioEngine.getStepError(stepId) || 'Không lấy được giọng Kore cho đoạn này.');
     }
 
+    if (expectedSession !== activeSessionRef.current) return;
     const ctx = await ensureAudioContext();
     const audioBuffer = await ctx.decodeAudioData(cached.arrayBuffer.slice(0));
+    if (expectedSession !== activeSessionRef.current) return;
     const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
     source.playbackRate.value = AudioEngine.getPlaybackRateMultiplier();
@@ -118,7 +128,9 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       }
 
       if (data.type === 'lesson-complete') {
-        setStatus('Bài giảng HTML + Kore đã chạy xong.');
+        if (runFailedRef.current) return;
+        completedCuesRef.current = [...calledCuesRef.current.values()];
+        setStatus('Bài giảng HTML + Kore đã chạy xong. Đã cache ' + completedCuesRef.current.length + ' cue thực sự được gọi.');
         return;
       }
 
@@ -127,7 +139,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       const messageSession = String(data.sessionId || '');
       const cueId = String(data.cueId || '');
       const requestId = String(data.requestId || '');
-      const matchingCue = cues.find((cue) => cue.id === cueId);
+      const matchingCue = declaredCues.find((cue) => cue.id === cueId);
       const narration = normalizeHtmlNarration(
         matchingCue?.narration || String(data.narration || '')
       );
@@ -137,8 +149,10 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
         if (messageSession !== activeSessionRef.current) return;
 
         try {
-          setStatus(`Kore đang đọc: ${narration}`);
-          await playCachedCue(stepId, narration);
+          if (!matchingCue) throw new Error('Cue chưa được khai báo trong narrationScript: ' + cueId);
+          calledCuesRef.current.set(cueId, matchingCue);
+          setStatus(`Kore đang chuẩn bị/đọc: ${narration}`);
+          await playCachedCue(stepId, narration, messageSession);
 
           if (messageSession !== activeSessionRef.current) return;
           iframeRef.current?.contentWindow?.postMessage(
@@ -153,6 +167,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
           setStatus('Đang chạy bài giảng có tiếng Kore...');
         } catch (err: any) {
           if (messageSession !== activeSessionRef.current) return;
+          runFailedRef.current = true;
           const message = err?.message || 'Không phát được lời đọc Kore.';
           setError(message);
           iframeRef.current?.contentWindow?.postMessage(
@@ -173,7 +188,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [isOpen, cues, lessonId]);
+  }, [isOpen, declaredCues, lessonId]);
 
   useEffect(() => {
     return () => {
@@ -201,6 +216,9 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
     if (!file) return;
 
     resetRun();
+    calledCuesRef.current.clear();
+    completedCuesRef.current = null;
+    runFailedRef.current = false;
     setFileName(file.name);
 
     const reader = new FileReader();
@@ -224,31 +242,19 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
 
     setIsPreparing(true);
     setError(null);
+    activeSessionRef.current = '';
     stopActiveAudio();
 
     try {
       // Resume while this action still originates from a user click.
       await ensureAudioContext();
 
-      const steps = cues.map((cue) => ({
-        id: `${lessonId}:${cue.id}`,
-        narration: normalizeHtmlNarration(cue.narration),
-        title: cue.id,
-      }));
-
-      setStatus(`Đang chuẩn bị Kore 0/${steps.length} đoạn...`);
-      const result = await AudioEngine.preloadLesson(
-        steps,
-        'Kore',
-        (ready, total) => setStatus(`Đang chuẩn bị Kore ${ready}/${total} đoạn...`)
-      );
-
-      if (result.ready !== steps.length) {
-        throw new Error(
-          result.failedReason ||
-            `Chỉ chuẩn bị được ${result.ready}/${steps.length} đoạn giọng Kore.`
-        );
-      }
+      // Do not synthesize a declaration merely because it exists. Imported JS
+      // may skip branches, loop over IDs or never call a declared cue at all.
+      // playCachedCue loads/generates only when the runtime asks for that cue.
+      calledCuesRef.current.clear();
+      completedCuesRef.current = null;
+      runFailedRef.current = false;
 
       const nextSession = makeSessionId();
       activeSessionRef.current = nextSession;
@@ -257,7 +263,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       setSessionId(nextSession);
       setRunningHtml(injectHtmlNarrationBridge(rawHtml, nextSession, lessonId));
       setRunKey((value) => value + 1);
-      setStatus(`Kore đã sẵn sàng ${result.ready}/${steps.length}. Đang chạy bài...`);
+      setStatus('Đang chạy bài. Kore được tạo/cache khi cue thực sự được gọi.');
     } catch (err: any) {
       setError(err?.message || 'Không chuẩn bị được giọng Kore cho HTML này.');
       setStatus('');
@@ -269,8 +275,12 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
   const replay = async () => {
     if (!rawHtml || cues.length === 0 || !lessonId) return;
 
+    activeSessionRef.current = '';
     stopActiveAudio();
     await ensureAudioContext();
+    calledCuesRef.current.clear();
+    completedCuesRef.current = null;
+    runFailedRef.current = false;
 
     const nextSession = makeSessionId();
     activeSessionRef.current = nextSession;
@@ -286,6 +296,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
   const openVideoExport = async () => {
     if (!rawHtml || cues.length === 0 || isPreparing || isOpeningExport) return;
 
+    const selectedCues = exportCues();
     const exportId = makeSessionId();
     const storageKey = `videoai2-html-export:${exportId}`;
 
@@ -294,11 +305,11 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
       if (needsStandaloneHtmlExport()) {
         await openStandaloneHtmlExport(exportId, async () => {
           const cachedCues: StandaloneHtmlExportCuePayload[] = [];
-          for (let i = 0; i < cues.length; i++) {
-            const cue = cues[i];
+          for (let i = 0; i < selectedCues.length; i++) {
+            const cue = selectedCues[i];
             const narration = normalizeHtmlNarration(cue.narration);
             const stepId = `${lessonId}:${cue.id}`;
-            setRecordingStatus(`Đang nạp Kore đã cache ${i + 1}/${cues.length}...`);
+            setRecordingStatus(`Đang nạp Kore đã cache ${i + 1}/${selectedCues.length}...`);
             const cached = AudioEngine.getCachedAudio(stepId, narration, 'Kore') ||
               await AudioEngine.loadStepAudio(stepId, narration, 'Kore', { allowApi: false });
             if (!cached) throw new Error(AudioEngine.getStepError(stepId) || 'Thiếu Kore đã cache. Hãy bấm “Chuẩn bị Kore & Chạy” trước khi xuất.');
@@ -315,7 +326,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
         });
       } else {
         localStorage.setItem(storageKey, JSON.stringify({
-          rawHtml,
+          rawHtml: completedCuesRef.current ? withHtmlCueManifest(rawHtml, selectedCues.map(cue => cue.id)) : rawHtml,
           fileName,
           createdAt: Date.now(),
         }));
@@ -346,6 +357,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
 
     setError(null);
     setRecordingStatus('Đang đóng gói HTML + Kore...');
+    const selectedCues = exportCues();
 
     const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
       const bytes = new Uint8Array(buffer);
@@ -367,12 +379,12 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
         audioBase64: string;
       }> = [];
 
-      for (let i = 0; i < cues.length; i++) {
-        const cue = cues[i];
+      for (let i = 0; i < selectedCues.length; i++) {
+        const cue = selectedCues[i];
         const narration = normalizeHtmlNarration(cue.narration);
         const stepId = `${lessonId}:${cue.id}`;
 
-        setRecordingStatus(`Đang đóng gói Kore ${i + 1}/${cues.length}...`);
+        setRecordingStatus(`Đang đóng gói Kore ${i + 1}/${selectedCues.length}...`);
 
         let cached = AudioEngine.getCachedAudio(stepId, narration, 'Kore');
         if (!cached) {
@@ -534,7 +546,7 @@ export const HtmlLessonPlayerModal: React.FC<HtmlLessonPlayerModalProps> = ({
             </button>
 
             <div className="text-[11px] leading-relaxed text-slate-400">
-              Chuẩn bị Kore trước, rồi xuất video trong tab mới bằng giọng đã cache.
+              Bấm “Chuẩn bị Kore & Chạy”, chờ bài chạy xong rồi xuất bằng giọng đã cache. Cue không được gọi sẽ không tạo TTS.
             </div>
 
             <button

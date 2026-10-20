@@ -1,0 +1,287 @@
+import { lessonMemberName, readLessonScripts, walkLessonJs } from './htmlLessonSource.ts';
+
+/** Self-contained: serialized into preview, both existing video exporters and
+ * offline HTML. Completion comes from the real voice promise, never a timeout. */
+export function installHtmlLessonSync() {
+  'use strict';
+  const win = window as any;
+  if (win.__videoai2LessonSync) return;
+  type Voice = { initial: boolean; done: Promise<unknown> };
+  let ready!: () => void;
+  const readyGate = new Promise<void>(resolve => { ready = resolve; });
+  const starts = new WeakMap<Function, Function>();
+  const voicePromises = new WeakSet<object>();
+  const pending = new Set<Voice>();
+  const exits = new Set<Promise<unknown>>();
+  const deferred: Array<{ voices: Voice[]; target?: object; apply: () => unknown; done: Promise<void>; resolve: () => void }> = [];
+  const trackExits = (target?: object) => {
+    const el = target instanceof Element ? target : target instanceof CSSStyleDeclaration ? [...document.querySelectorAll('*')].find(el => (el as HTMLElement).style === target) : undefined;
+    for (const animation of el?.getAnimations({ subtree: true }) || []) {
+      const effect = animation.effect as KeyframeEffect | null;
+      if (!effect || !Number.isFinite(effect.getTiming().iterations) || !hiddenFrames(effect.getKeyframes())) continue;
+      const done = animation.finished.catch(() => {});
+      exits.add(done); void done.then(() => exits.delete(done));
+    }
+  };
+  const flush = () => {
+    for (let i = 0; i < deferred.length;) {
+      const item = deferred[i];
+      if (item.voices.some(voice => pending.has(voice))) { i++; continue; }
+      deferred.splice(i, 1);
+      try { item.apply(); trackExits(item.target); } finally { item.resolve(); }
+    }
+  };
+  // Setup/clear from the previous scene in the synchronous opening of a cue
+  // remains immediate. Later cleanup belongs to the playing narration.
+  const holding = () => [...pending].some(voice => !voice.initial);
+  const later = (apply: () => unknown, target?: object) => {
+    let resolve!: () => void;
+    const done = new Promise<void>(yes => { resolve = yes; });
+    deferred.push({ voices: [...pending], target, apply, done, resolve });
+  };
+  const blocked = (target: object) => deferred.some(item => item.target === target ||
+    item.target instanceof Node && target instanceof Node && item.target.contains(target));
+  const whenIdle = async () => {
+    do {
+      while (pending.size) await Promise.all([...pending].map(voice => voice.done));
+      flush();
+      await Promise.all([...exits]);
+    } while (pending.size || exits.size);
+  };
+  const hiddenValue = (property: string, value: unknown) => {
+    const v = String(value).trim().toLowerCase();
+    return property === 'display' && v === 'none' || property === 'visibility' && ['hidden', 'collapse'].includes(v) ||
+      ['opacity', 'height', 'width', 'max-height', 'max-width', 'maxHeight', 'maxWidth'].includes(property) && /^0(?:\.0+)?(?:px|%|em|rem)?$/.test(v) ||
+      property === 'transform' && /scale(?:[xy])?\(\s*0(?:[\s,)])/.test(v);
+  };
+  const visible = (el: Element) => {
+    const style = getComputedStyle(el);
+    const box = el.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden' && style.visibility !== 'collapse' &&
+      Number(style.opacity) > 0 && (el instanceof SVGElement ? box.width > .5 || box.height > .5 : box.width > .5 && box.height > .5);
+  };
+  const hiddenFrames = (frames: any) => {
+    if (Array.isArray(frames)) {
+      const last = frames[frames.length - 1];
+      return last && Object.entries(last).some(([p, v]) => hiddenValue(p, v));
+    }
+    return frames && Object.entries(frames).some(([p, v]) => hiddenValue(p, Array.isArray(v) ? v[v.length - 1] : v));
+  };
+  const classOwner = (list: DOMTokenList) => [...document.querySelectorAll('*')].find(el => el.classList === list);
+  const probeHide = (el: Element, change: (clone: Element) => unknown) => {
+    if (!el.parentElement || !visible(el)) return false;
+    const clone = el.cloneNode(true) as HTMLElement;
+    clone.setAttribute('data-videoai2-sync-probe', '');
+    el.parentElement.insertBefore(clone, el.nextSibling);
+    try {
+      change(clone);
+      const exits = clone.getAnimations({ subtree: true }).some(animation => hiddenFrames((animation.effect as KeyframeEffect | null)?.getKeyframes()));
+      clone.style?.setProperty('transition', 'none', 'important');
+      clone.style?.setProperty('animation', 'none', 'important');
+      if (exits || !visible(clone)) return true;
+      const before = [...el.querySelectorAll('*')];
+      return [...clone.querySelectorAll('*')].some((child, i) => before[i] && visible(before[i]) && !visible(child));
+    } finally { clone.remove(); }
+  };
+  const api = {
+    beforeStart: undefined as undefined | (() => unknown),
+    onComplete: undefined as undefined | (() => void),
+    whenIdle,
+    capture(invoke: () => unknown) {
+      const first = deferred.length;
+      invoke();
+      const actions = deferred.slice(first);
+      return actions.length ? Promise.all(actions.map(action => action.done)) : undefined;
+    },
+    wrapStart(original: Function) {
+      if (typeof original !== 'function') return original;
+      if (starts.has(original)) return starts.get(original);
+      const wrapped = async function(this: unknown, ...args: unknown[]) {
+        await readyGate;
+        await api.beforeStart?.();
+        const value = await Reflect.apply(original, this, args);
+        await whenIdle();
+        api.onComplete?.();
+        return value;
+      };
+      starts.set(original, wrapped); starts.set(wrapped, wrapped);
+      return wrapped;
+    },
+    async withCue(invoke: (scope: { animation: (original: any) => any }) => unknown) {
+      const animations: Promise<unknown>[] = [];
+      const scope = {
+        animation(original: any) {
+          if (typeof original !== 'function') return original;
+          return function(this: unknown, ...args: unknown[]) {
+            const result = Promise.resolve(Reflect.apply(original, this, args));
+            animations.push(result);
+            return result;
+          };
+        },
+      };
+      const value = await invoke(scope);
+      await Promise.all(animations);
+      await whenIdle();
+      return value;
+    },
+    narration(invoke: () => unknown) {
+      const result = invoke();
+      if (result && typeof result === 'object' && voicePromises.has(result)) return result;
+      let resolve!: (value: unknown) => void;
+      let reject!: (error: unknown) => void;
+      const done = new Promise((yes, no) => { resolve = yes; reject = no; });
+      voicePromises.add(done);
+      const voice = { initial: true, done };
+      pending.add(voice);
+      queueMicrotask(() => { voice.initial = false; });
+      const finish = (ok: boolean, value: unknown) => {
+        pending.delete(voice);
+        try { flush(); } catch (error) { reject(error); return; }
+        if (ok) resolve(value); else reject(value);
+      };
+      Promise.resolve(result).then(value => finish(true, value), error => finish(false, error));
+      return done;
+    },
+    assign(object: any, property: string, value: any) {
+      const apply = () => object[property] = value;
+      if (!holding()) return apply();
+      if (blocked(object)) { later(apply, object); return value; }
+      const styleOwner = object instanceof CSSStyleDeclaration && property === 'cssText' ? [...document.querySelectorAll('*')].find(el => (el as HTMLElement).style === object) : undefined;
+      const hides = object instanceof CSSStyleDeclaration && (hiddenValue(property, value) || styleOwner && probeHide(styleOwner, clone => (clone as HTMLElement).style.cssText = value)) ||
+        object instanceof Element && (['className', 'style'].includes(property) && probeHide(object, clone => (clone as any)[property] = value) || property === 'hidden' && value === true ||
+          ['innerHTML', 'textContent', 'innerText'].includes(property) && value === '' && object.textContent);
+      if (hides) { later(apply, object); return value; }
+      return apply();
+    },
+    method(object: any, name: string, args: any[]) {
+      const apply = () => Reflect.apply(object[name], object, args);
+      if (name === 'onNarrationCue') return api.narration(apply);
+      if (!holding()) return apply();
+      const owner = object instanceof DOMTokenList ? classOwner(object) : object;
+      if (owner && blocked(owner)) { later(apply, owner); return name === 'removeChild' ? args[0] : undefined; }
+      let hides = false;
+      let result: unknown;
+      if (object instanceof DOMTokenList && ['add', 'remove', 'toggle', 'replace'].includes(name)) {
+        const el = owner as Element | undefined;
+        if (el) hides = probeHide(el, clone => result = Reflect.apply((clone.classList as any)[name], clone.classList, args));
+      } else if (object instanceof Element) {
+        if (['remove', 'replaceWith'].includes(name)) hides = visible(object);
+        if (name === 'removeChild' && args[0] instanceof Element) { hides = visible(args[0]); result = args[0]; }
+        if (name === 'replaceChildren' && !args.length) hides = Boolean(object.textContent || object.childElementCount);
+        if (['setAttribute', 'removeAttribute'].includes(name) && ['class', 'style', 'hidden', 'display', 'visibility', 'opacity'].includes(args[0])) {
+          hides = probeHide(object, clone => Reflect.apply((clone as any)[name], clone, args));
+        }
+        if (name === 'animate' && hiddenFrames(args[0])) {
+          const animation = apply() as Animation;
+          animation.pause();
+          later(() => animation.play(), object);
+          return animation;
+        }
+      } else if (object instanceof CSSStyleDeclaration && name === 'setProperty') hides = hiddenValue(args[0], args[1]);
+      if (hides) { later(apply, owner); return result; }
+      return apply();
+    },
+  };
+  win.__videoai2LessonSync = api;
+  const existing = Object.getOwnPropertyDescriptor(win, 'onNarrationCue');
+  // A server runner may own a locked audio hook. Call sites still pass its
+  // actual voice promise through narration(), without replacing the runner.
+  if (existing && !existing.configurable) { if (typeof win.onNarrationCue === 'function') ready(); return; }
+  let voiceHandler: any;
+  Object.defineProperty(win, 'onNarrationCue', {
+    configurable: true,
+    get: () => voiceHandler,
+    set(handler) {
+      if (typeof handler !== 'function') { voiceHandler = handler; return; }
+      ready();
+      voiceHandler = function(this: unknown, ...args: unknown[]) {
+        return api.narration(() => Reflect.apply(handler, this, args));
+      };
+    },
+  });
+  if (typeof existing?.value === 'function') win.onNarrationCue = existing.value;
+
+}
+
+/** Interpose only on visual cleanup operations and cue completion. Parsing keeps
+ * literal text, formulas, cue IDs, animation timings and original HTML intact. */
+export function prepareHtmlLessonSync(html: string) {
+  if (html.includes('data-videoai2-lesson-sync')) return html;
+  const api = 'window.__videoai2LessonSync';
+  const methods = new Set(['add', 'remove', 'toggle', 'replace', 'setAttribute', 'removeAttribute', 'removeChild', 'replaceChildren', 'replaceWith', 'animate', 'setProperty', 'append', 'appendChild', 'prepend', 'insertBefore', 'insertAdjacentHTML', 'insertAdjacentElement', 'insertAdjacentText', 'onNarrationCue']);
+  const properties = new Set(['display', 'visibility', 'opacity', 'height', 'width', 'maxHeight', 'maxWidth', 'transform', 'hidden', 'innerHTML', 'textContent', 'innerText', 'className', 'cssText', 'style']);
+  const edits: Array<{ at: number; end: number; text: string; priority?: number }> = [];
+  const scripts = readLessonScripts(html);
+  const names = new Set<string>();
+  for (const script of scripts) walkLessonJs(script.ast, node => { if (node.type === 'Identifier') names.add(node.name); });
+  let scopeName = '__videoai2CueScope';
+  while (names.has(scopeName) || names.has(scopeName + 'Wait')) scopeName += '_';
+  for (const script of scripts) {
+    walkLessonJs(script.ast, (node, ancestors) => {
+      const parent = ancestors[ancestors.length - 1];
+      const fn = [...ancestors].reverse().find(item => /Function/.test(item.type));
+      const isMutation = node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && methods.has(lessonMemberName(node.callee) || '') ||
+        node.type === 'AssignmentExpression' && node.operator === '=' && node.left.type === 'MemberExpression' && properties.has(lessonMemberName(node.left) || '');
+      const hasOuterAwait = (value: any): boolean => {
+        if (!value || typeof value !== 'object' || /Function/.test(value.type || '')) return false;
+        if (value.type === 'AwaitExpression') return true;
+        return Object.values(value).some(child => Array.isArray(child) ? child.some(hasOuterAwait) : hasOuterAwait(child));
+      };
+      if (isMutation && parent?.type === 'ExpressionStatement' && fn?.async && !hasOuterAwait(node)) {
+        // Only yield when a cleanup really was held; initial scene setup stays
+        // synchronous and an authored exit sleep starts after audio, not before.
+        edits.push({ at: script.start + parent.start, end: script.start + parent.start, priority: -1, text: `{const ${scopeName}Wait=${api}.capture(()=>{` });
+        edits.push({ at: script.start + parent.end, end: script.start + parent.end, priority: -10, text: `});if(${scopeName}Wait)await ${scopeName}Wait;}` });
+      }
+      const isEntryReference = node.type === 'Identifier' && node.name === 'startAnimation' &&
+        !(parent?.type === 'FunctionDeclaration' && parent.id === node) &&
+        !(parent?.type === 'VariableDeclarator' && parent.id === node) &&
+        !(parent?.type === 'AssignmentExpression' && parent.left === node) &&
+        !(parent?.type === 'MemberExpression' && !parent.computed && parent.property === node) &&
+        !(parent?.type === 'Property' && parent.key === node) &&
+        !/^(?:Import|Export.*Specifier|UnaryExpression)/.test(parent?.type || '') ||
+        node.type === 'MemberExpression' && lessonMemberName(node) === 'startAnimation' &&
+          !(parent?.type === 'AssignmentExpression' && parent.left === node);
+      if (isEntryReference) {
+        edits.push({ at: script.start + node.start, end: script.start + node.start, text: `${api}.wrapStart(` });
+        edits.push({ at: script.start + node.end, end: script.start + node.end, priority: -20, text: ')' });
+      }
+      if (node.type === 'CallExpression' && !node.optional && !node.callee.optional && !node.callee.object?.optional) {
+        if (node.callee.type === 'Identifier' && lessonMemberName(node.callee) === 'onNarrationCue') {
+          edits.push({ at: script.start + node.start, end: script.start + node.start, text: `${api}.narration(async()=>(` });
+          edits.push({ at: script.start + node.end, end: script.start + node.end, priority: -20, text: '))' });
+        } else if (lessonMemberName(node.callee) === 'withCue') {
+          edits.push({ at: script.start + node.start, end: script.start + node.start, text: `${api}.withCue(async(${scopeName})=>(` });
+          edits.push({ at: script.start + node.end, end: script.start + node.end, priority: -20, text: '))' });
+          const animation = node.arguments[1];
+          if (animation && animation.type !== 'SpreadElement') {
+            edits.push({ at: script.start + animation.start, end: script.start + animation.start, text: `${scopeName}.animation(` });
+            edits.push({ at: script.start + animation.end, end: script.start + animation.end, priority: -20, text: ')' });
+          }
+        } else if (node.callee.type === 'MemberExpression' && methods.has(lessonMemberName(node.callee) || '')) {
+          const object = node.callee.object;
+          const name = lessonMemberName(node.callee);
+          // Keep nested receiver/argument rewrites by replacing only punctuation.
+          edits.push({ at: script.start + node.start, end: script.start + object.start, text: `${api}.method(` });
+          edits.push({ at: script.start + object.end, end: script.start + (node.arguments[0]?.start ?? node.end - 1), text: `,${JSON.stringify(name)},[` });
+          edits.push({ at: script.start + node.end - 1, end: script.start + node.end, text: '])' });
+        }
+      } else if (node.type === 'AssignmentExpression' && node.operator === '=' && node.left.type === 'MemberExpression' && !node.left.optional) {
+        const name = lessonMemberName(node.left);
+        if (!name || !properties.has(name)) return;
+        const object = node.left.object;
+        edits.push({ at: script.start + node.start, end: script.start + object.start, text: `${api}.assign(` });
+        edits.push({ at: script.start + object.end, end: script.start + node.right.start, text: `,${JSON.stringify(name)},` });
+        edits.push({ at: script.start + node.end, end: script.start + node.end, priority: -20, text: ')' });
+      }
+    });
+  }
+  let output = html;
+  for (const edit of edits.sort((a, b) => b.at - a.at || b.end - a.end || (b.priority ?? 10) - (a.priority ?? 10))) output = output.slice(0, edit.at) + edit.text + output.slice(edit.end);
+  // Keep charset within the HTML encoding prescan before the inline runtime.
+  const runtime = `<meta charset="utf-8"><script data-videoai2-lesson-sync>(${installHtmlLessonSync.toString()})();<\/script>`;
+  const head = /<head\b[^>]*>/i.exec(output);
+  const root = /<html\b[^>]*>/i.exec(output);
+  const at = head ? head.index + head[0].length : root ? root.index + root[0].length : undefined;
+  return at === undefined ? runtime + output : output.slice(0, at) + runtime + output.slice(at);
+}
