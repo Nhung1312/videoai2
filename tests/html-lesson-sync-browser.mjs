@@ -47,6 +47,7 @@ try {
   },audioBase64);
   await page.goto('http://127.0.0.1:4173/');await page.getByRole('button',{name:'HTML + Kore',exact:true}).click();
   await page.locator('input[type=file][accept*=".html"]').setInputFiles({name:'generic-cues.html',mimeType:'text/html',buffer:Buffer.from(html)});
+  await page.evaluate(async()=>{const {AudioEngine}=await import('/src/lib/audioEngine.ts');AudioEngine.settings.voiceSpeed='slow';});
   const started=Date.now();await page.getByRole('button',{name:'Chuẩn bị Kore & Chạy',exact:true}).click();
   const preview=page.frameLocator('iframe[title="HTML lesson preview with Kore narration"]');
   await preview.locator('#popup.show').waitFor();await page.waitForTimeout(250);

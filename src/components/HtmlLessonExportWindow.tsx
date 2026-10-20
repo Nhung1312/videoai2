@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Loader2, Play, XCircle } from 'lucide-react';
-import { AudioEngine } from '../lib/audioEngine';
+import { AudioEngine, type VoiceSettings } from '../lib/audioEngine';
 import { createHtmlExportGuard, readHtmlRecordingDurations, assertHtmlRecordingDurations } from '../lib/htmlExportSafety';
 import {
   HtmlNarrationCue,
@@ -19,6 +19,7 @@ interface HtmlExportPayload {
   rawHtml: string;
   fileName?: string | null;
   createdAt?: number;
+  voiceSpeed?: VoiceSettings['voiceSpeed'];
 }
 
 const EXPORT_PREFIX = 'videoai2-html-export:';
@@ -184,6 +185,12 @@ export const HtmlLessonExportWindow: React.FC<HtmlLessonExportWindowProps> = ({
       const validation = validateHtmlLesson(parsed.rawHtml);
       if (!validation.success) {
         throw new Error(validation.error || 'HTML chưa đúng chuẩn narrationScript + cue.');
+      }
+
+      // Cache keys include speed. A new tab defaults to normal, so preserve
+      // the preparing tab's setting before any cache-only lookup/playback.
+      if (parsed.voiceSpeed && ['slow', 'normal', 'fast'].includes(parsed.voiceSpeed)) {
+        AudioEngine.settings.voiceSpeed = parsed.voiceSpeed;
       }
 
       setPayload(parsed);
