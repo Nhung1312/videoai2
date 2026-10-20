@@ -1,3 +1,4 @@
+import { withHtmlCueManifest } from './htmlLessonSource.ts';
 import { prepareHtmlLessonSync } from './htmlLessonSync.ts';
 
 export interface EmbeddedKoreCue {
@@ -23,7 +24,7 @@ export const buildOfflineKoreHtml = (
   cues: EmbeddedKoreCue[],
   playbackRate: number
 ): string => {
-  html = prepareHtmlLessonSync(html);
+  html = prepareHtmlLessonSync(withHtmlCueManifest(html, cues.map(cue => cue.id)));
   const payload = inlineJson(cues);
   const rate = Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1;
 
@@ -162,6 +163,7 @@ export const buildOfflineKoreHtml = (
 
   // The shared entry gate also supports lexical const/arrow entry functions.
   window.__videoai2LessonSync.beforeStart = () => startGate;
+  if (typeof window.startAnimation === 'function') window.startAnimation = window.__videoai2LessonSync.wrapStart(window.startAnimation);
 
   const installStartUi = () => {
     if (document.getElementById('videoai2-kore-start')) return;

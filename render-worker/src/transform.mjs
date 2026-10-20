@@ -53,7 +53,14 @@ function isStartTarget(node) {
 }
 export function inspectLesson(html) {
   const inline = scripts(html);
-  const cueIds = inline.flatMap(s => staticNarration(s.ast));
+  let cueIds = inline.flatMap(s => staticNarration(s.ast));
+  const prepared = [...html.matchAll(/<!--videoai2-used-cues:([\s\S]*?)-->/g)].at(-1);
+  if (prepared) {
+    let ids;
+    try { ids = JSON.parse(prepared[1]); } catch { throw new RenderError('package-error', 'Danh sách cue đã chuẩn bị không hợp lệ.'); }
+    assertRender(Array.isArray(ids) && ids.every(id => typeof id === 'string' && cueIds.includes(id)), 'package-error', 'Danh sách cue đã chuẩn bị không hợp lệ.');
+    cueIds = cueIds.filter(id => ids.includes(id));
+  }
   assertRender(new Set(cueIds).size === cueIds.length, 'package-error', 'narrationScript chứa cue ID trùng.');
   return { cueIds, inlineScripts: inline.length };
 }

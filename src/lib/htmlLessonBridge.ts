@@ -131,6 +131,7 @@ export const injectHtmlNarrationBridge = (
     });
   };
 
+  if (typeof window.startAnimation === 'function') window.startAnimation = window.__videoai2LessonSync.wrapStart(window.startAnimation);
   window.__videoai2LessonSync.onComplete = () => {
     window.parent.postMessage({
       source: 'videoai2-html-lesson',

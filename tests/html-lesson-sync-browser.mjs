@@ -2,6 +2,12 @@
 // there is no Gemini request and no teacher input in this test.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import path from 'node:path';
+import {tmpdir} from 'node:os';
+import {importOffline} from '../render-worker/scripts/import-offline.mjs';
+import {loadPackage,ORIGIN} from '../render-worker/src/package.mjs';
+import {buildRunnerHtml} from '../render-worker/src/browser.mjs';
+import {BRIDGE_KEY} from '../render-worker/src/transform.mjs';
 import { spawn } from 'node:child_process';
 import { chromium } from '../render-worker/node_modules/playwright-core/index.mjs';
 
@@ -62,6 +68,21 @@ try {
   await local.locator('#popup.show').waitFor();await local.waitForTimeout(250);
   assert.equal(await local.locator('#popup').evaluate(el=>getComputedStyle(el).visibility),'visible');
   await local.waitForFunction(()=>!document.getElementById('popup').classList.contains('show')&&!document.getElementById('videoai2-kore-start'),null,{timeout:5000});await local.close();
+  // The existing server/offline importer must accept the same downloaded
+  // lesson without duplicating the entry gate or replacing its locked voice API.
+  const directory=await fs.mkdtemp(path.join(tmpdir(),'videoai2-cue-compat-'));
+  try {
+    const input=path.join(directory,'lesson.html');await fs.writeFile(input,offline);
+    const target=path.join(directory,'package');await importOffline(input,target);const pkg=await loadPackage(target);
+    assert.deepEqual(pkg.inspection.cueIds,['used']);
+    const worker=await context.newPage();await worker.setViewportSize({width:720,height:1280});
+    await worker.route(ORIGIN+'/**',route=>{const url=route.request().url();if(url===ORIGIN+'/')return route.fulfill({contentType:'text/html; charset=utf-8',body:buildRunnerHtml(pkg,{tailMs:100})});const file=pkg.files.get(url);return file?route.fulfill({contentType:file.contentType,body:file.bytes}):route.abort();});
+    await worker.goto(ORIGIN+'/');
+    await worker.evaluate(async key=>{await window[key].prepare();window[key].recordingReady();window[key].start();},BRIDGE_KEY);
+    await worker.waitForFunction(key=>window[key].snapshot().state==='COMPLETE'||window[key].snapshot().failure,BRIDGE_KEY,{timeout:10000});
+    const snapshot=await worker.evaluate(key=>window[key].snapshot(),BRIDGE_KEY);assert.equal(snapshot.failure,null,JSON.stringify(snapshot));assert.equal(snapshot.state,'COMPLETE');assert.equal(snapshot.cueCounts.used,2);await worker.close();
+    console.log('PASS: existing offline importer and server runner retain their audio/entry pipeline');
+  }finally{await fs.rm(directory,{recursive:true,force:true});}
   console.log('PASS: actual called cue only, dynamic IDs, skipped branch, repeated-cue cache, manual HTML and existing video entry; mocked TTS calls='+requests.length);
 
   // Real AudioBufferSourceNode.onended acknowledgments, shorter visual timers.

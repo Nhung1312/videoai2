@@ -3,12 +3,14 @@ import { lessonMemberName, readLessonScripts, walkLessonJs } from './htmlLessonS
 /** Self-contained: serialized into preview, both existing video exporters and
  * offline HTML. Completion comes from the real voice promise, never a timeout. */
 export function installHtmlLessonSync() {
+  'use strict';
   const win = window as any;
   if (win.__videoai2LessonSync) return;
   type Voice = { initial: boolean; done: Promise<unknown> };
   let ready!: () => void;
   const readyGate = new Promise<void>(resolve => { ready = resolve; });
   const starts = new WeakMap<Function, Function>();
+  const voicePromises = new WeakSet<object>();
   const pending = new Set<Voice>();
   const exits = new Set<Promise<unknown>>();
   const deferred: Array<{ voices: Voice[]; target?: object; apply: () => unknown; done: Promise<void>; resolve: () => void }> = [];
@@ -92,6 +94,7 @@ export function installHtmlLessonSync() {
       return actions.length ? Promise.all(actions.map(action => action.done)) : undefined;
     },
     wrapStart(original: Function) {
+      if (typeof original !== 'function') return original;
       if (starts.has(original)) return starts.get(original);
       const wrapped = async function(this: unknown, ...args: unknown[]) {
         await readyGate;
@@ -121,6 +124,24 @@ export function installHtmlLessonSync() {
       await whenIdle();
       return value;
     },
+    narration(invoke: () => unknown) {
+      const result = invoke();
+      if (result && typeof result === 'object' && voicePromises.has(result)) return result;
+      let resolve!: (value: unknown) => void;
+      let reject!: (error: unknown) => void;
+      const done = new Promise((yes, no) => { resolve = yes; reject = no; });
+      voicePromises.add(done);
+      const voice = { initial: true, done };
+      pending.add(voice);
+      queueMicrotask(() => { voice.initial = false; });
+      const finish = (ok: boolean, value: unknown) => {
+        pending.delete(voice);
+        try { flush(); } catch (error) { reject(error); return; }
+        if (ok) resolve(value); else reject(value);
+      };
+      Promise.resolve(result).then(value => finish(true, value), error => finish(false, error));
+      return done;
+    },
     assign(object: any, property: string, value: any) {
       const apply = () => object[property] = value;
       if (!holding()) return apply();
@@ -134,6 +155,7 @@ export function installHtmlLessonSync() {
     },
     method(object: any, name: string, args: any[]) {
       const apply = () => Reflect.apply(object[name], object, args);
+      if (name === 'onNarrationCue') return api.narration(apply);
       if (!holding()) return apply();
       const owner = object instanceof DOMTokenList ? classOwner(object) : object;
       if (owner && blocked(owner)) { later(apply, owner); return name === 'removeChild' ? args[0] : undefined; }
@@ -161,6 +183,10 @@ export function installHtmlLessonSync() {
     },
   };
   win.__videoai2LessonSync = api;
+  const existing = Object.getOwnPropertyDescriptor(win, 'onNarrationCue');
+  // A server runner may own a locked audio hook. Call sites still pass its
+  // actual voice promise through narration(), without replacing the runner.
+  if (existing && !existing.configurable) { if (typeof win.onNarrationCue === 'function') ready(); return; }
   let voiceHandler: any;
   Object.defineProperty(win, 'onNarrationCue', {
     configurable: true,
@@ -168,24 +194,13 @@ export function installHtmlLessonSync() {
     set(handler) {
       if (typeof handler !== 'function') { voiceHandler = handler; return; }
       ready();
-      voiceHandler = function(this: any, ...args: any[]) {
-        let resolve!: (value: unknown) => void;
-        let reject!: (error: unknown) => void;
-        const done = new Promise((yes, no) => { resolve = yes; reject = no; });
-        const voice = { initial: true, done };
-        pending.add(voice);
-        queueMicrotask(() => { voice.initial = false; });
-        const finish = (ok: boolean, result: unknown) => {
-          pending.delete(voice);
-          try { flush(); } catch (error) { reject(error); return; }
-          if (ok) resolve(result); else reject(result);
-        };
-        try { Promise.resolve(Reflect.apply(handler, this, args)).then(value => finish(true, value), error => finish(false, error)); }
-        catch (error) { finish(false, error); }
-        return done;
+      voiceHandler = function(this: unknown, ...args: unknown[]) {
+        return api.narration(() => Reflect.apply(handler, this, args));
       };
     },
   });
+  if (typeof existing?.value === 'function') win.onNarrationCue = existing.value;
+
 }
 
 /** Interpose only on visual cleanup operations and cue completion. Parsing keeps
@@ -193,7 +208,7 @@ export function installHtmlLessonSync() {
 export function prepareHtmlLessonSync(html: string) {
   if (html.includes('data-videoai2-lesson-sync')) return html;
   const api = 'window.__videoai2LessonSync';
-  const methods = new Set(['add', 'remove', 'toggle', 'replace', 'setAttribute', 'removeAttribute', 'removeChild', 'replaceChildren', 'replaceWith', 'animate', 'setProperty', 'append', 'appendChild', 'prepend', 'insertBefore', 'insertAdjacentHTML', 'insertAdjacentElement', 'insertAdjacentText']);
+  const methods = new Set(['add', 'remove', 'toggle', 'replace', 'setAttribute', 'removeAttribute', 'removeChild', 'replaceChildren', 'replaceWith', 'animate', 'setProperty', 'append', 'appendChild', 'prepend', 'insertBefore', 'insertAdjacentHTML', 'insertAdjacentElement', 'insertAdjacentText', 'onNarrationCue']);
   const properties = new Set(['display', 'visibility', 'opacity', 'height', 'width', 'maxHeight', 'maxWidth', 'transform', 'hidden', 'innerHTML', 'textContent', 'innerText', 'className', 'cssText', 'style']);
   const edits: Array<{ at: number; end: number; text: string; priority?: number }> = [];
   const scripts = readLessonScripts(html);
@@ -203,15 +218,6 @@ export function prepareHtmlLessonSync(html: string) {
   while (names.has(scopeName) || names.has(scopeName + 'Wait')) scopeName += '_';
   for (const script of scripts) {
     walkLessonJs(script.ast, (node, ancestors) => {
-      if (node.type === 'FunctionDeclaration' && node.id?.name === 'startAnimation') {
-        const parent = ancestors[ancestors.length - 1];
-        const container = parent?.type === 'ExportNamedDeclaration' ? ancestors[ancestors.length - 2] : parent;
-        if (container?.type === 'Program' || container?.type === 'BlockStatement') {
-          const directives = container.body.filter((item: any) => item.type === 'ExpressionStatement' && item.directive);
-          const at = script.start + (directives[directives.length - 1]?.end ?? (container.type === 'Program' ? 0 : container.start + 1));
-          edits.push({ at, end: at, priority: -2, text: `;startAnimation=${api}.wrapStart(startAnimation);` });
-        }
-      }
       const parent = ancestors[ancestors.length - 1];
       const fn = [...ancestors].reverse().find(item => /Function/.test(item.type));
       const isMutation = node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && methods.has(lessonMemberName(node.callee) || '') ||
@@ -227,14 +233,24 @@ export function prepareHtmlLessonSync(html: string) {
         edits.push({ at: script.start + parent.start, end: script.start + parent.start, priority: -1, text: `{const ${scopeName}Wait=${api}.capture(()=>{` });
         edits.push({ at: script.start + parent.end, end: script.start + parent.end, text: `});if(${scopeName}Wait)await ${scopeName}Wait;}` });
       }
-      const startValue = node.type === 'VariableDeclarator' && node.id?.name === 'startAnimation' ? node.init :
-        node.type === 'AssignmentExpression' && lessonMemberName(node.left) === 'startAnimation' ? node.right : null;
-      if (startValue) {
-        edits.push({ at: script.start + startValue.start, end: script.start + startValue.start, text: `${api}.wrapStart(` });
-        edits.push({ at: script.start + startValue.end, end: script.start + startValue.end, text: ')' });
+      const isEntryReference = node.type === 'Identifier' && node.name === 'startAnimation' &&
+        !(parent?.type === 'FunctionDeclaration' && parent.id === node) &&
+        !(parent?.type === 'VariableDeclarator' && parent.id === node) &&
+        !(parent?.type === 'AssignmentExpression' && parent.left === node) &&
+        !(parent?.type === 'MemberExpression' && !parent.computed && parent.property === node) &&
+        !(parent?.type === 'Property' && parent.key === node) &&
+        !/^(?:Import|Export.*Specifier|UnaryExpression)/.test(parent?.type || '') ||
+        node.type === 'MemberExpression' && lessonMemberName(node) === 'startAnimation' &&
+          !(parent?.type === 'AssignmentExpression' && parent.left === node);
+      if (isEntryReference) {
+        edits.push({ at: script.start + node.start, end: script.start + node.start, text: `${api}.wrapStart(` });
+        edits.push({ at: script.start + node.end, end: script.start + node.end, text: ')' });
       }
       if (node.type === 'CallExpression' && !node.optional && !node.callee.optional && !node.callee.object?.optional) {
-        if (lessonMemberName(node.callee) === 'withCue') {
+        if (node.callee.type === 'Identifier' && lessonMemberName(node.callee) === 'onNarrationCue') {
+          edits.push({ at: script.start + node.start, end: script.start + node.start, text: `${api}.narration(async()=>(` });
+          edits.push({ at: script.start + node.end, end: script.start + node.end, text: '))' });
+        } else if (lessonMemberName(node.callee) === 'withCue') {
           edits.push({ at: script.start + node.start, end: script.start + node.start, text: `${api}.withCue(async(${scopeName})=>(` });
           edits.push({ at: script.start + node.end, end: script.start + node.end, text: '))' });
           const animation = node.arguments[1];

@@ -32,3 +32,9 @@ test('inspect flat narration without eval, including Vietnamese and template str
   const result = inspectLesson('<html><script>const narrationScript={a:"mờ", "b":`ích`};function startAnimation(){}</script></html>');
   assert.deepEqual(result.cueIds, ['a', 'b']);
 });
+test('prepared cue metadata permits unused declarations but never unknown audio IDs', () => {
+  const html = '<html><script>const narrationScript={used:"đọc",unused:"không đọc"};function startAnimation(){}</script></html>';
+  assert.deepEqual(inspectLesson(html).cueIds, ['used', 'unused']);
+  assert.deepEqual(inspectLesson(html + '<!--videoai2-used-cues:["used"]-->').cueIds, ['used']);
+  assert.throws(() => inspectLesson(html + '<!--videoai2-used-cues:["unknown"]-->'), /không hợp lệ/);
+});
