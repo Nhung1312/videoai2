@@ -1,13 +1,14 @@
 import { parse as parseHtml } from 'parse5';
 import { parse as parseJs } from 'acorn';
 
-export function walkLessonJs(node: any, visit: (node: any) => void) {
+export function walkLessonJs(node: any, visit: (node: any, ancestors: any[]) => void, ancestors: any[] = []) {
   if (!node || typeof node !== 'object') return;
-  if (typeof node.type === 'string') visit(node);
+  if (typeof node.type === 'string') visit(node, ancestors);
+  const parents = [...ancestors, node];
   for (const [key, child] of Object.entries(node)) {
     if (key === 'loc') continue;
-    if (Array.isArray(child)) child.forEach(value => walkLessonJs(value, visit));
-    else if (child && typeof child === 'object') walkLessonJs(child, visit);
+    if (Array.isArray(child)) child.forEach(value => walkLessonJs(value, visit, parents));
+    else if (child && typeof child === 'object') walkLessonJs(child, visit, parents);
   }
 }
 

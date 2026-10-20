@@ -75,17 +75,20 @@ try {
     {name:'timer-cleanup',markup:'<div id="visual">Lời giải</div>',show:'',hide:'setTimeout(()=>el.remove(),10)',removed:true},
     {name:'raf-cleanup',markup:'<div id="visual">Kết luận</div>',show:'',hide:"requestAnimationFrame(()=>{el.style.display='none'})"},
     {name:'css-exit',markup:'<div id="visual">Bí quyết</div>',show:'',hide:"el.classList.add('exit')"},
+    {name:'authored-exit-sleep',markup:'<div id="visual">Hết lời rồi mới thu hình</div>',show:'',hide:"el.style.opacity='0';await sleep(120)",extraHold:100},
+    {name:'scoped-entry',markup:'<div id="visual">Đại số trong phạm vi riêng</div>',show:'',hide:'el.remove()',removed:true,scoped:true},
     {name:'deferred-rebuild',markup:'<div id="visual">Nội dung đang đọc</div>',show:'',hide:"el.innerHTML='';el.append('Kết quả giữ nguyên')",rebuild:true},
     {name:'long-animation',markup:'<div id="visual">Bài giải dài</div>',show:'',hide:"await sleep(1000);el.style.opacity='0'",slow:true},
     {name:'web-animation-exit',markup:'<div id="visual">Hình học</div>',show:'',hide:"await el.animate([{opacity:1},{opacity:0}],{duration:40,fill:'forwards'}).finished"},
   ];
   for(const item of cases){
     const host=await context.newPage();await host.goto('http://127.0.0.1:4173/test-cue-host');
-    const original=`<!doctype html><html><head><style>.panel{opacity:0;visibility:hidden}.show{opacity:1;visibility:visible}@keyframes disappear{to{opacity:0}}.exit{animation:disappear .04s forwards}</style></head><body>${item.markup}<script>${helpers}
+    let original=`<!doctype html><html><head><style>.panel{opacity:0;visibility:hidden}.show{opacity:1;visibility:visible}@keyframes disappear{to{opacity:0}}.exit{animation:disappear .04s forwards}</style></head><body>${item.markup}<script>${helpers}
 const startAnimation=async()=>{await withCue('used',async()=>{const el=document.getElementById('visual');${item.show};await sleep(30);${item.hide};});document.body.dataset.finished='yes';};startAnimation();</script></body></html>`;
+    if(item.scoped)original=original.replace('<script>','<script>(()=>{').replace('</script>','})();</script>');
     await host.evaluate(async original=>{
       const {injectHtmlNarrationBridge}=await import('/src/lib/htmlLessonBridge.ts');window.completed=false;window.ended=false;const ctx=new AudioContext();await ctx.resume();
-      window.addEventListener('message',event=>{const d=event.data;if(d?.type==='lesson-complete')window.completed=true;if(d?.type!=='narration-cue')return;const source=ctx.createBufferSource();source.buffer=ctx.createBuffer(1,Math.round(ctx.sampleRate*.8),ctx.sampleRate);source.connect(ctx.destination);source.onended=()=>{window.ended=true;event.source.postMessage({source:'videoai2-html-host',sessionId:d.sessionId,requestId:d.requestId,ok:true},'*');};source.start();});
+      window.addEventListener('message',event=>{const d=event.data;if(d?.type==='lesson-complete'){window.completed=true;window.completedAt=performance.now();}if(d?.type!=='narration-cue')return;const source=ctx.createBufferSource();source.buffer=ctx.createBuffer(1,Math.round(ctx.sampleRate*.8),ctx.sampleRate);source.connect(ctx.destination);source.onended=()=>{window.ended=true;window.endedAt=performance.now();event.source.postMessage({source:'videoai2-html-host',sessionId:d.sessionId,requestId:d.requestId,ok:true},'*');};source.start();});
       const frame=document.createElement('iframe');frame.srcdoc=injectHtmlNarrationBridge(original,'test','test');document.body.appendChild(frame);
     },original);
     const frame=host.frameLocator('iframe');await frame.locator('#visual').waitFor({state:'attached'});await host.waitForTimeout(180);
@@ -96,6 +99,7 @@ const startAnimation=async()=>{await withCue('used',async()=>{const el=document.
     if(item.slow){await host.waitForTimeout(680);assert.equal(await host.evaluate(()=>window.completed),false,'short audio must not finish a longer animation');}
     await host.waitForFunction(()=>window.completed,null,{timeout:5000});
     assert.equal(await host.evaluate(()=>window.ended),true,item.name);
+    if(item.extraHold)assert.ok(await host.evaluate(()=>window.completedAt-window.endedAt)>=item.extraHold,'authored exit sleep must start after voice completes');
     assert.equal(await frame.locator('body').getAttribute('data-finished'),'yes');
     if(item.rebuild)assert.equal(await frame.locator('#visual').textContent(),'Kết quả giữ nguyên');
     else if(item.removed)assert.equal(await frame.locator('#visual').count(),0);

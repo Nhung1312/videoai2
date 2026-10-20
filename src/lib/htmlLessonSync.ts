@@ -10,24 +10,41 @@ export function installHtmlLessonSync() {
   const readyGate = new Promise<void>(resolve => { ready = resolve; });
   const starts = new WeakMap<Function, Function>();
   const pending = new Set<Voice>();
-  const deferred: Array<{ voices: Voice[]; target?: object; apply: () => unknown }> = [];
+  const exits = new Set<Promise<unknown>>();
+  const deferred: Array<{ voices: Voice[]; target?: object; apply: () => unknown; done: Promise<void>; resolve: () => void }> = [];
+  const trackExits = (target?: object) => {
+    const el = target instanceof Element ? target : target instanceof CSSStyleDeclaration ? [...document.querySelectorAll('*')].find(el => (el as HTMLElement).style === target) : undefined;
+    for (const animation of el?.getAnimations({ subtree: true }) || []) {
+      const effect = animation.effect as KeyframeEffect | null;
+      if (!effect || !Number.isFinite(effect.getTiming().iterations) || !hiddenFrames(effect.getKeyframes())) continue;
+      const done = animation.finished.catch(() => {});
+      exits.add(done); void done.then(() => exits.delete(done));
+    }
+  };
   const flush = () => {
     for (let i = 0; i < deferred.length;) {
       const item = deferred[i];
       if (item.voices.some(voice => pending.has(voice))) { i++; continue; }
       deferred.splice(i, 1);
-      item.apply();
+      try { item.apply(); trackExits(item.target); } finally { item.resolve(); }
     }
   };
   // Setup/clear from the previous scene in the synchronous opening of a cue
   // remains immediate. Later cleanup belongs to the playing narration.
   const holding = () => [...pending].some(voice => !voice.initial);
-  const later = (apply: () => unknown, target?: object) => { deferred.push({ voices: [...pending], target, apply }); };
+  const later = (apply: () => unknown, target?: object) => {
+    let resolve!: () => void;
+    const done = new Promise<void>(yes => { resolve = yes; });
+    deferred.push({ voices: [...pending], target, apply, done, resolve });
+  };
   const blocked = (target: object) => deferred.some(item => item.target === target ||
     item.target instanceof Node && target instanceof Node && item.target.contains(target));
   const whenIdle = async () => {
-    while (pending.size) await Promise.all([...pending].map(voice => voice.done));
-    flush();
+    do {
+      while (pending.size) await Promise.all([...pending].map(voice => voice.done));
+      flush();
+      await Promise.all([...exits]);
+    } while (pending.size || exits.size);
   };
   const hiddenValue = (property: string, value: unknown) => {
     const v = String(value).trim().toLowerCase();
@@ -56,16 +73,24 @@ export function installHtmlLessonSync() {
     el.parentElement.insertBefore(clone, el.nextSibling);
     try {
       change(clone);
-      const exits = clone.getAnimations().some(animation => hiddenFrames((animation.effect as KeyframeEffect | null)?.getKeyframes()));
+      const exits = clone.getAnimations({ subtree: true }).some(animation => hiddenFrames((animation.effect as KeyframeEffect | null)?.getKeyframes()));
       clone.style?.setProperty('transition', 'none', 'important');
       clone.style?.setProperty('animation', 'none', 'important');
-      return exits || !visible(clone);
+      if (exits || !visible(clone)) return true;
+      const before = [...el.querySelectorAll('*')];
+      return [...clone.querySelectorAll('*')].some((child, i) => before[i] && visible(before[i]) && !visible(child));
     } finally { clone.remove(); }
   };
   const api = {
     beforeStart: undefined as undefined | (() => unknown),
     onComplete: undefined as undefined | (() => void),
     whenIdle,
+    capture(invoke: () => unknown) {
+      const first = deferred.length;
+      invoke();
+      const actions = deferred.slice(first);
+      return actions.length ? Promise.all(actions.map(action => action.done)) : undefined;
+    },
     wrapStart(original: Function) {
       if (starts.has(original)) return starts.get(original);
       const wrapped = async function(this: unknown, ...args: unknown[]) {
@@ -170,19 +195,38 @@ export function prepareHtmlLessonSync(html: string) {
   const api = 'window.__videoai2LessonSync';
   const methods = new Set(['add', 'remove', 'toggle', 'replace', 'setAttribute', 'removeAttribute', 'removeChild', 'replaceChildren', 'replaceWith', 'animate', 'setProperty', 'append', 'appendChild', 'prepend', 'insertBefore', 'insertAdjacentHTML', 'insertAdjacentElement', 'insertAdjacentText']);
   const properties = new Set(['display', 'visibility', 'opacity', 'height', 'width', 'maxHeight', 'maxWidth', 'transform', 'hidden', 'innerHTML', 'textContent', 'innerText', 'className', 'cssText', 'style']);
-  const edits: Array<{ at: number; end: number; text: string }> = [];
+  const edits: Array<{ at: number; end: number; text: string; priority?: number }> = [];
   const scripts = readLessonScripts(html);
   const names = new Set<string>();
   for (const script of scripts) walkLessonJs(script.ast, node => { if (node.type === 'Identifier') names.add(node.name); });
   let scopeName = '__videoai2CueScope';
-  while (names.has(scopeName)) scopeName += '_';
+  while (names.has(scopeName) || names.has(scopeName + 'Wait')) scopeName += '_';
   for (const script of scripts) {
-    for (const declaration of script.ast.body.filter((node: any) => node.type === 'FunctionDeclaration' && node.id?.name === 'startAnimation')) {
-      const directives = script.ast.body.filter((node: any) => node.type === 'ExpressionStatement' && node.directive);
-      const at = script.start + (directives[directives.length - 1]?.end || 0);
-      edits.push({ at, end: at, text: `;startAnimation=${api}.wrapStart(startAnimation);` });
-    }
-    walkLessonJs(script.ast, node => {
+    walkLessonJs(script.ast, (node, ancestors) => {
+      if (node.type === 'FunctionDeclaration' && node.id?.name === 'startAnimation') {
+        const parent = ancestors[ancestors.length - 1];
+        const container = parent?.type === 'ExportNamedDeclaration' ? ancestors[ancestors.length - 2] : parent;
+        if (container?.type === 'Program' || container?.type === 'BlockStatement') {
+          const directives = container.body.filter((item: any) => item.type === 'ExpressionStatement' && item.directive);
+          const at = script.start + (directives[directives.length - 1]?.end ?? (container.type === 'Program' ? 0 : container.start + 1));
+          edits.push({ at, end: at, priority: -2, text: `;startAnimation=${api}.wrapStart(startAnimation);` });
+        }
+      }
+      const parent = ancestors[ancestors.length - 1];
+      const fn = [...ancestors].reverse().find(item => /Function/.test(item.type));
+      const isMutation = node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && methods.has(lessonMemberName(node.callee) || '') ||
+        node.type === 'AssignmentExpression' && node.operator === '=' && node.left.type === 'MemberExpression' && properties.has(lessonMemberName(node.left) || '');
+      const hasOuterAwait = (value: any): boolean => {
+        if (!value || typeof value !== 'object' || /Function/.test(value.type || '')) return false;
+        if (value.type === 'AwaitExpression') return true;
+        return Object.values(value).some(child => Array.isArray(child) ? child.some(hasOuterAwait) : hasOuterAwait(child));
+      };
+      if (isMutation && parent?.type === 'ExpressionStatement' && fn?.async && !hasOuterAwait(node)) {
+        // Only yield when a cleanup really was held; initial scene setup stays
+        // synchronous and an authored exit sleep starts after audio, not before.
+        edits.push({ at: script.start + parent.start, end: script.start + parent.start, priority: -1, text: `{const ${scopeName}Wait=${api}.capture(()=>{` });
+        edits.push({ at: script.start + parent.end, end: script.start + parent.end, text: `});if(${scopeName}Wait)await ${scopeName}Wait;}` });
+      }
       const startValue = node.type === 'VariableDeclarator' && node.id?.name === 'startAnimation' ? node.init :
         node.type === 'AssignmentExpression' && lessonMemberName(node.left) === 'startAnimation' ? node.right : null;
       if (startValue) {
@@ -217,7 +261,7 @@ export function prepareHtmlLessonSync(html: string) {
     });
   }
   let output = html;
-  for (const edit of edits.sort((a, b) => b.at - a.at || b.end - a.end)) output = output.slice(0, edit.at) + edit.text + output.slice(edit.end);
+  for (const edit of edits.sort((a, b) => b.at - a.at || b.end - a.end || (b.priority || 0) - (a.priority || 0))) output = output.slice(0, edit.at) + edit.text + output.slice(edit.end);
   // Keep charset within the HTML encoding prescan before the inline runtime.
   const runtime = `<meta charset="utf-8"><script data-videoai2-lesson-sync>(${installHtmlLessonSync.toString()})();<\/script>`;
   const head = /<head\b[^>]*>/i.exec(output);

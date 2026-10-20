@@ -65,6 +65,15 @@ test('function, arrow and assignment entries use the same completion gate', () =
   }
 });
 
+test('scoped eager entries and mutation statements preserve syntax and lexical scope', () => {
+  const html = lesson("await withCue('used',async()=>{if(true) document.getElementById('v').remove(); else document.getElementById('v').style.display='none';});");
+  const scoped = html.replace('<script>', '<script>(()=>{').replace('</script>', '})();</script>');
+  const transformed = prepareHtmlLessonSync(scoped);
+  assert.ok(transformed.includes('.wrapStart(startAnimation)'));
+  assert.ok(transformed.includes('.capture('));
+  for (const script of readLessonScripts(transformed)) assert.doesNotThrow(() => parse(script.source, { ecmaVersion: 'latest' }));
+});
+
 test('preview/video bridge and manual HTML share the same synchronization runtime', () => {
   const html = lesson("await cue('used');");
   for (const output of [injectHtmlNarrationBridge(html, 'session', 'lesson'), buildOfflineKoreHtml(html, [{ id:'used',mimeType:'audio/wav',audioBase64:'fixture' }], 1)]) {
